@@ -12,7 +12,7 @@ st.set_page_config(page_title="Sistema de Insumos - Vet Playas", layout="wide")
 
 # ==========================================
 # 🔴 PEGA TU ENLACE DE SUPABASE AQUÍ ADENTRO:
-DATABASE_URL = "postgresql://postgres:SaamMG12493@db.bxhjaaaraswvzhfxntfl.supabase.co:5432/postgres"
+DATABASE_URL = "postgresql://postgres:SaamMG12493@db.bxhjaaaraswvzhfxntfl.supabase.co:5432/postgres?sslmode=require"
 # ==========================================
 
 def get_connection():
