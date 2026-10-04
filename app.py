@@ -8,7 +8,7 @@ import io
 import os
 import base64
 
-st.set_page_config(page_title="Sistema de Insumos - Vet Playas", layout="wide")
+st.set_page_config(page_title="Sistema de Insumos - Vet Playas", page_icon="logo.png", layout="wide")
 
 # ==========================================
 # 🔴 PEGA TU ENLACE DE SUPABASE AQUÍ ADENTRO:
