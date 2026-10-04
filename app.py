@@ -7,8 +7,11 @@ import time
 import io
 import os
 import base64
+from PIL import Image
 
-st.set_page_config(page_title="Sistema de Insumos - Vet Playas", page_icon="logo.png", layout="wide")
+# Cargar la imagen físicamente antes de configurar la página
+logo_icono = Image.open("logo.png")
+st.set_page_config(page_title="Sistema de Insumos - Vet Playas", page_icon=logo_icono, layout="wide")
 
 # ==========================================
 # 🔴 PEGA TU ENLACE DE SUPABASE AQUÍ ADENTRO:
