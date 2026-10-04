@@ -586,15 +586,83 @@ elif rol == "Administrador":
                         finally: conn.close()
                         
         elif menu_admin == "Gestión de Personal":
-            n_pers = st.text_input("Nombre completo")
-            if st.button("Guardar Nombre") and n_pers:
-                conn = get_connection()
-                try:
-                    c = conn.cursor()
-                    c.execute("INSERT INTO personal (nombre) VALUES (%s)", (n_pers.strip().upper(),))
-                    conn.commit(); st.success("Registrado.")
-                except IntegrityError: st.error("Ya existe.")
-                finally: conn.close()
+            st.subheader("👥 Gestión de Personal")
+            
+            # 1. Agregar nuevo
+            with st.form("form_agregar_personal", clear_on_submit=True):
+                st.write("**Agregar Nuevo Colaborador**")
+                n_pers = st.text_input("Nombre completo")
+                if st.form_submit_button("Guardar Nombre") and n_pers:
+                    conn = get_connection()
+                    try:
+                        c = conn.cursor()
+                        c.execute("INSERT INTO personal (nombre) VALUES (%s)", (n_pers.strip().upper(),))
+                        conn.commit()
+                        st.success("Registrado.")
+                        time.sleep(1)
+                        st.rerun()
+                    except IntegrityError: 
+                        st.error("Ya existe en la base de datos.")
+                    finally: 
+                        conn.close()
+            
+            st.divider()
+            
+            # 2. Listar, Editar y Eliminar
+            st.write("**Directorio de Personal**")
+            conn = get_connection()
+            try:
+                df_personal = pd.read_sql_query("SELECT id_personal, nombre FROM personal ORDER BY nombre ASC", conn)
+            finally:
+                conn.close()
+                
+            if not df_personal.empty:
+                # Mostramos la tabla actual
+                st.dataframe(df_personal, use_container_width=True, hide_index=True)
+                
+                st.write("---")
+                st.write("**Editar o Eliminar Personal**")
+                persona_seleccionada = st.selectbox("Selecciona a la persona a modificar:", df_personal['nombre'].tolist())
+                
+                if persona_seleccionada:
+                    id_persona = int(df_personal[df_personal['nombre'] == persona_seleccionada].iloc[0]['id_personal'])
+                    
+                    col_ed1, col_ed2 = st.columns([3, 1])
+                    nuevo_nombre = col_ed1.text_input("Modificar nombre:", value=persona_seleccionada)
+                    
+                    col_btn1, col_btn2 = st.columns(2)
+                    if col_btn1.button("Actualizar Nombre", type="primary"):
+                        if nuevo_nombre.strip() == "":
+                            st.error("El nombre no puede estar vacío.")
+                        else:
+                            conn = get_connection()
+                            try:
+                                c = conn.cursor()
+                                c.execute("UPDATE personal SET nombre = %s WHERE id_personal = %s", (nuevo_nombre.strip().upper(), id_persona))
+                                conn.commit()
+                                st.success("Nombre actualizado.")
+                                time.sleep(1)
+                                st.rerun()
+                            except IntegrityError:
+                                st.error("Ese nombre ya existe.")
+                            finally:
+                                conn.close()
+                                
+                    if col_btn2.button("🗑️ Eliminar Persona"):
+                        conn = get_connection()
+                        try:
+                            c = conn.cursor()
+                            c.execute("DELETE FROM personal WHERE id_personal = %s", (id_persona,))
+                            conn.commit()
+                            st.success("Persona eliminada del sistema.")
+                            time.sleep(1)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error al eliminar: {e}")
+                        finally:
+                            conn.close()
+            else:
+                st.info("No hay personal registrado aún.")
             
         elif menu_admin == "Configuración IA":
             n_llave = st.text_input("API Key:", value=API_KEY_GLOBAL, type="password")
