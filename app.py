@@ -509,7 +509,8 @@ elif rol == "Administrador":
 
         elif menu_admin == "Catálogo de Insumos":
             st.subheader("Catálogo de Insumos")
-            tab_c1, tab_c2, tab_c3, tab_c4 = st.tabs(["📦 Crear", "📸 Imagen", "🧪 Componentes", "📈 Mín / Máx"])
+            tab_c1, tab_c2, tab_c3, tab_c4, tab_c5, tab_c6 = st.tabs(["📦 Crear", "📸 Imagen", "🧪 Componentes", "📈 Mín / Máx", "🚀 Carga Masiva", "✏️ Editar / Eliminar"])
+            
             with tab_c1:
                 c1, c2, c3 = st.columns(3)
                 n = c1.text_input("Nombre", key="n_art")
@@ -584,6 +585,109 @@ elif rol == "Administrador":
                             c.execute("UPDATE insumos SET stock_minimo = %s, stock_maximo = %s WHERE id_insumo = %s", (n_min, n_max, int(datos_stk['id_insumo'])))
                             conn.commit(); st.success("Límites actualizados."); time.sleep(1); st.rerun()
                         finally: conn.close()
+            
+            with tab_c5:
+                st.write("**Carga Masiva desde Excel**")
+                st.info("El archivo Excel debe tener la columna (en mayúsculas): PRODUCTO. Opcionales: MINIMO, MAXIMO, FAMILIA, DEPARTAMENTO.")
+                archivo_masivo = st.file_uploader("Sube tu catálogo completo", type=["xls", "xlsx"])
+                
+                if archivo_masivo:
+                    df_masivo = pd.read_excel(archivo_masivo)
+                    df_masivo.columns = [str(c).strip().upper() for c in df_masivo.columns]
+                    
+                    if 'PRODUCTO' in df_masivo.columns:
+                        if st.button("🚀 Iniciar Carga de Catálogo", type="primary"):
+                            conn = get_connection()
+                            try:
+                                c = conn.cursor()
+                                count_ok = 0
+                                count_errores = 0
+                                for _, row in df_masivo.iterrows():
+                                    p = str(row['PRODUCTO']).strip().upper()
+                                    if pd.isna(p) or p == "NAN" or p == "":
+                                        continue
+                                        
+                                    f = str(row.get('FAMILIA', 'PRODUCTOS')).strip().upper() if 'FAMILIA' in df_masivo.columns and pd.notna(row.get('FAMILIA')) else 'PRODUCTOS'
+                                    d = str(row.get('DEPARTAMENTO', 'MEDICAMENTO')).strip().upper() if 'DEPARTAMENTO' in df_masivo.columns and pd.notna(row.get('DEPARTAMENTO')) else 'MEDICAMENTO'
+                                    
+                                    try: s_min = int(float(row.get('MINIMO', 0))) if 'MINIMO' in df_masivo.columns else 0
+                                    except: s_min = 0
+                                    
+                                    try: s_max = int(float(row.get('MAXIMO', 0))) if 'MAXIMO' in df_masivo.columns else 0
+                                    except: s_max = 0
+                                    
+                                    try:
+                                        c.execute("""
+                                            INSERT INTO insumos (nombre_articulo, familia, departamento, existencia, stock_minimo, stock_maximo) 
+                                            VALUES (%s, %s, %s, 0, %s, %s)
+                                            ON CONFLICT (nombre_articulo) 
+                                            DO UPDATE SET stock_minimo = EXCLUDED.stock_minimo, stock_maximo = EXCLUDED.stock_maximo
+                                        """, (p, f, d, s_min, s_max))
+                                        count_ok += 1
+                                    except Exception as e:
+                                        count_errores += 1
+                                
+                                conn.commit()
+                                st.success(f"✅ ¡Éxito! Se subieron o actualizaron {count_ok} artículos en la base de datos.")
+                                if count_errores > 0: st.warning(f"Hubo {count_errores} filas que no se pudieron procesar.")
+                            finally:
+                                conn.close()
+                    else:
+                        st.error("❌ El archivo no tiene la columna 'PRODUCTO'. Revisa el encabezado de tu Excel.")
+                        
+            with tab_c6:
+                st.write("**Modificar o Eliminar Artículo del Catálogo**")
+                conn = get_connection()
+                try: df_edit = pd.read_sql_query("SELECT * FROM insumos ORDER BY nombre_articulo", conn)
+                finally: conn.close()
+                
+                if not df_edit.empty:
+                    art_edit = st.selectbox("Selecciona el artículo a modificar:", df_edit['nombre_articulo'].tolist(), key="sel_ed")
+                    datos_art = df_edit[df_edit['nombre_articulo'] == art_edit].iloc[0]
+                    
+                    col_e1, col_e2, col_e3 = st.columns(3)
+                    n_edit = col_e1.text_input("Nuevo Nombre", value=datos_art['nombre_articulo'])
+                    
+                    fam_index = ["PRODUCTOS", "SERVICIOS"].index(datos_art['familia']) if datos_art['familia'] in ["PRODUCTOS", "SERVICIOS"] else 0
+                    f_edit = col_e2.selectbox("Nueva Familia", ["PRODUCTOS", "SERVICIOS"], index=fam_index)
+                    
+                    dept_opts = ["EXAMENES", "SERVICIOS", "MEDICAMENTO", "ALIMENTOS", "VACUNAS", "ROPA", "ACCESORIOS"]
+                    dept_index = dept_opts.index(datos_art['departamento']) if datos_art['departamento'] in dept_opts else 2
+                    d_edit = col_e3.selectbox("Nuevo Depto", dept_opts, index=dept_index)
+                    
+                    col_btn_e1, col_btn_e2 = st.columns(2)
+                    if col_btn_e1.button("Actualizar Datos", type="primary"):
+                        if n_edit.strip() == "":
+                            st.error("El nombre no puede estar vacío.")
+                        else:
+                            conn = get_connection()
+                            try:
+                                c = conn.cursor()
+                                c.execute("UPDATE insumos SET nombre_articulo = %s, familia = %s, departamento = %s WHERE id_insumo = %s", (n_edit.strip().upper(), f_edit, d_edit, int(datos_art['id_insumo'])))
+                                conn.commit()
+                                st.success("Artículo actualizado correctamente.")
+                                time.sleep(1.5)
+                                st.rerun()
+                            except IntegrityError:
+                                st.error("Ya existe otro artículo con ese nombre.")
+                            finally:
+                                conn.close()
+                                
+                    if col_btn_e2.button("🗑️ Eliminar Artículo"):
+                        conn = get_connection()
+                        try:
+                            c = conn.cursor()
+                            c.execute("DELETE FROM insumos WHERE id_insumo = %s", (int(datos_art['id_insumo']),))
+                            conn.commit()
+                            st.success("Artículo eliminado.")
+                            time.sleep(1.5)
+                            st.rerun()
+                        except IntegrityError:
+                            st.error("⚠️ No se puede eliminar: el artículo ya tiene historial de compras o solicitudes. Si ya no lo usas, actualiza su nombre a 'DESCONTINUADO - [Nombre]'.")
+                        finally:
+                            conn.close()
+                else:
+                    st.info("No hay artículos en el catálogo.")
                         
         elif menu_admin == "Gestión de Personal":
             st.subheader("👥 Gestión de Personal")
