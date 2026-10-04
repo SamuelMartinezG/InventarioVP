@@ -318,9 +318,16 @@ elif rol == "Administrador":
     if not st.session_state.admin_auth:
         st.title("🔒 Acceso Restringido")
         with st.form("form_login"):
-            if st.form_submit_button("Ingresar") and st.text_input("Contraseña", type="password") == "vetplayas": 
-                st.session_state.admin_auth = True
-                st.rerun()
+            # Separamos la caja de texto y el botón para que se dibujen bien
+            pwd_ingresada = st.text_input("Contraseña", type="password")
+            submit_login = st.form_submit_button("Ingresar")
+            
+            if submit_login:
+                if pwd_ingresada == "vetplayas": 
+                    st.session_state.admin_auth = True
+                    st.rerun()
+                else: 
+                    st.error("❌ Contraseña incorrecta. Intenta de nuevo.")
     else:
         st.sidebar.markdown("---")
         if st.sidebar.button("🔴 Cerrar Sesión"):
