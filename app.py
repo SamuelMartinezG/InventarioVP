@@ -10,8 +10,8 @@ import base64
 from PIL import Image
 
 # Cargar la imagen físicamente antes de configurar la página
-logo_icono = Image.open("logo.png")
-st.set_page_config(page_title="Sistema de Insumos - Vet Playas", page_icon=logo_icono, layout="wide")
+logo_icono = Image.open("icono_app.png")
+st.set_page_config(page_title="Sistema de Insumos", page_icon=logo_icono, layout="wide")
 
 # ==========================================
 # 🔴 PEGA TU ENLACE DE SUPABASE AQUÍ ADENTRO:
