@@ -16,7 +16,8 @@ DATABASE_URL = "postgresql://postgres.bxhjaaaraswvzhfxntfl:SaamMG12493@aws-0-us-
 # ==========================================
 
 def get_connection():
-    return psycopg2.connect(DATABASE_URL)
+    # El connect_timeout=5 fuerza al sistema a no quedarse congelado si hay un problema de red
+    return psycopg2.connect(DATABASE_URL, connect_timeout=5)
 
 def init_db():
     conn = get_connection()
