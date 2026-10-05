@@ -185,12 +185,14 @@ st.sidebar.title("Navegación")
 rol = st.sidebar.selectbox("Selecciona tu perfil:", ["Personal", "Administrador"])
 
 def mostrar_tarjeta_producto(datos_articulo):
-    col_img, col_info = st.columns([1, 2])
+    # Ajustamos la columna de la imagen para que no ocupe tanto espacio horizontal
+    col_img, col_info = st.columns([1, 3]) 
     with col_img:
         imagen_b64 = datos_articulo.get('imagen_b64', None)
         if pd.notna(imagen_b64) and str(imagen_b64).strip() != "":
             try:
-                st.image(base64.b64decode(imagen_b64), use_container_width=True)
+                # 🛑 Aquí está el límite: forzamos el ancho a 250 píxeles máximo
+                st.image(base64.b64decode(imagen_b64), width=250)
             except Exception:
                 st.info("📷 Error de imagen")
         else:
