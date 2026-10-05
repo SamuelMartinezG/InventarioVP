@@ -280,7 +280,7 @@ if rol == "Personal":
                     st.session_state.carrito = []
                     st.rerun()
 
-    elif menu_personal == "Consultar Inventario":
+   elif menu_personal == "Consultar Inventario":
         st.title("📦 Visor de Existencias")
         conn = get_connection()
         try: df_inv = pd.read_sql_query("SELECT * FROM insumos ORDER BY nombre_articulo ASC", conn)
@@ -289,9 +289,19 @@ if rol == "Personal":
         if not df_inv.empty:
             tab_b1, tab_b2 = st.tabs(["🔍 Búsqueda Normal", "🤖 Asistente Médico (IA)"])
             with tab_b1:
-                articulo_buscar = st.selectbox("Selecciona el artículo:", [""] + df_inv['nombre_articulo'].tolist())
+                st.write("**Buscador de Detalles:**")
+                articulo_buscar = st.selectbox("Selecciona un artículo para ver su foto y detalles específicos:", [""] + df_inv['nombre_articulo'].tolist())
                 if articulo_buscar:
                     mostrar_tarjeta_producto(df_inv[df_inv['nombre_articulo'] == articulo_buscar].iloc[0])
+                
+                st.write("---")
+                st.write("### 📋 Directorio General")
+                # Creamos la tabla limpia que pediste
+                df_mostrar = df_inv[['nombre_articulo', 'componentes', 'existencia']].copy()
+                df_mostrar['Imagen'] = df_inv['imagen_b64'].apply(lambda x: "✅" if pd.notna(x) and str(x).strip() != "" else "🚫")
+                df_mostrar.columns = ['Producto', 'Componentes', 'Existencia', 'Imagen']
+                st.dataframe(df_mostrar, use_container_width=True, hide_index=True)
+                
             with tab_b2:
                 consulta_medico = st.text_input("Consulta a la IA (Ej: 'Antibiótico en suspensión')")
                 if st.button("Consultar ✨", type="primary"):
@@ -509,84 +519,113 @@ elif rol == "Administrador":
 
         elif menu_admin == "Catálogo de Insumos":
             st.subheader("Catálogo de Insumos")
-            tab_c1, tab_c2, tab_c3, tab_c4, tab_c5, tab_c6 = st.tabs(["📦 Crear", "📸 Imagen", "🧪 Componentes", "📈 Mín / Máx", "🚀 Carga Masiva", "✏️ Editar / Eliminar"])
+            tab_cat, tab_masiva = st.tabs(["📋 Gestión de Catálogo", "🚀 Carga Masiva (Excel)"])
             
-            with tab_c1:
-                c1, c2, c3 = st.columns(3)
-                n = c1.text_input("Nombre", key="n_art")
-                f = c2.selectbox("Familia", ["PRODUCTOS", "SERVICIOS"], key="f_art")
-                d = c3.selectbox("Depto", ["EXAMENES", "SERVICIOS", "MEDICAMENTO", "ALIMENTOS", "VACUNAS", "ROPA", "ACCESORIOS"])
-                comp = st.text_input("Componentes", value=st.session_state.get("n_comp", ""))
-                
-                c4, c5 = st.columns(2)
-                s_min = c4.number_input("Stock Mínimo (Alerta)", min_value=0, value=2)
-                s_max = c5.number_input("Stock Máximo (Meta a llenar)", min_value=1, value=10)
-                
-                if st.button("Guardar en Catálogo", type="primary") and n:
-                    conn = get_connection()
-                    try:
-                        c = conn.cursor()
-                        c.execute("INSERT INTO insumos (nombre_articulo, familia, departamento, componentes, existencia, stock_minimo, stock_maximo) VALUES (%s, %s, %s, %s, 0, %s, %s)", (n.strip().upper(), f, d, comp, s_min, s_max))
-                        conn.commit()
-                        st.success("Agregado.")
-                        time.sleep(1); st.rerun()
-                    except IntegrityError: st.error("Ya existe.")
-                    finally: conn.close()
-                            
-            with tab_c2:
-                conn = get_connection()
-                try: df_img = pd.read_sql_query("SELECT id_insumo, nombre_articulo FROM insumos ORDER BY nombre_articulo", conn)
-                finally: conn.close()
-                if not df_img.empty:
-                    art_img = st.selectbox("Artículo", df_img['nombre_articulo'].tolist())
-                    arch = st.file_uploader("Foto", type=["jpg", "png"])
-                    if st.button("Guardar Imagen") and arch:
-                        conn = get_connection()
-                        try:
-                            c = conn.cursor()
-                            c.execute("UPDATE insumos SET imagen_b64 = %s WHERE id_insumo = %s", (base64.b64encode(arch.getvalue()).decode(), int(df_img[df_img['nombre_articulo'] == art_img].iloc[0]['id_insumo'])))
-                            conn.commit()
-                            st.success("Imagen actualizada."); time.sleep(1); st.rerun()
-                        finally: conn.close()
+            with tab_cat:
+                with st.expander("➕ Agregar Nuevo Artículo al Catálogo", expanded=False):
+                    c1, c2, c3 = st.columns(3)
+                    n_nuevo = c1.text_input("Nombre del Producto", key="nn_art")
+                    f_nuevo = c2.selectbox("Familia", ["PRODUCTOS", "SERVICIOS"], key="nf_art")
+                    d_nuevo = c3.selectbox("Depto", ["EXAMENES", "SERVICIOS", "MEDICAMENTO", "ALIMENTOS", "VACUNAS", "ROPA", "ACCESORIOS"])
+                    comp_nuevo = st.text_input("Componentes", key="n_comp")
+                    
+                    c4, c5 = st.columns(2)
+                    s_min_nuevo = c4.number_input("Stock Mínimo (Alerta)", min_value=0, value=2)
+                    s_max_nuevo = c5.number_input("Stock Máximo (Meta a llenar)", min_value=1, value=10)
+                    
+                    if st.button("Guardar Nuevo Producto", type="primary"):
+                        if n_nuevo:
+                            conn = get_connection()
+                            try:
+                                c = conn.cursor()
+                                c.execute("INSERT INTO insumos (nombre_articulo, familia, departamento, componentes, existencia, stock_minimo, stock_maximo) VALUES (%s, %s, %s, %s, 0, %s, %s)", (n_nuevo.strip().upper(), f_nuevo, d_nuevo, comp_nuevo, s_min_nuevo, s_max_nuevo))
+                                conn.commit()
+                                st.success("Agregado exitosamente.")
+                                time.sleep(1); st.rerun()
+                            except IntegrityError: st.error("Ya existe un artículo con ese nombre.")
+                            finally: conn.close()
+                        else: st.error("El nombre es obligatorio.")
 
-            with tab_c3:
+                st.write("### 📋 Directorio de Productos")
                 conn = get_connection()
-                try: df_comp = pd.read_sql_query("SELECT id_insumo, nombre_articulo, componentes FROM insumos ORDER BY nombre_articulo", conn)
+                try: df_cat = pd.read_sql_query("SELECT * FROM insumos ORDER BY nombre_articulo", conn)
                 finally: conn.close()
-                if not df_comp.empty:
-                    art_comp = st.selectbox("Artículo:", df_comp['nombre_articulo'].tolist(), key="s_c")
-                    if st.button("✨ Sugerir con IA"):
-                        res = obtener_componentes_ia(art_comp, API_KEY_GLOBAL)
-                        if "ERROR" not in res: st.session_state["e_comp"] = res
-                    n_comp = st.text_input("Componentes", value=st.session_state.get("e_comp", df_comp[df_comp['nombre_articulo'] == art_comp].iloc[0]['componentes']))
-                    if st.button("Actualizar Componentes", type="primary"):
+                
+                if not df_cat.empty:
+                    df_display = df_cat[['nombre_articulo', 'componentes', 'stock_minimo', 'stock_maximo']].copy()
+                    df_display['Imagen'] = df_cat['imagen_b64'].apply(lambda x: "✅" if pd.notna(x) and str(x).strip() != "" else "🚫")
+                    df_display.columns = ['Producto', 'Componentes', 'Mínimo', 'Máximo', 'Imagen']
+                    st.dataframe(df_display, use_container_width=True, hide_index=True)
+                    
+                    st.write("---")
+                    st.write("### ✏️ Editar / Eliminar Artículo")
+                    art_edit = st.selectbox("Selecciona un artículo de la tabla para modificarlo:", df_cat['nombre_articulo'].tolist())
+                    datos_art = df_cat[df_cat['nombre_articulo'] == art_edit].iloc[0]
+                    
+                    # Manejo de estado para que la IA funcione sin borrar lo escrito
+                    if "edit_comp_val" not in st.session_state or st.session_state.get("last_edit_art") != art_edit:
+                        st.session_state["edit_comp_val"] = datos_art['componentes'] if pd.notna(datos_art['componentes']) else ""
+                        st.session_state["last_edit_art"] = art_edit
+                    
+                    col_e1, col_e2, col_e3 = st.columns(3)
+                    n_edit = col_e1.text_input("Nombre", value=datos_art['nombre_articulo'])
+                    fam_index = ["PRODUCTOS", "SERVICIOS"].index(datos_art['familia']) if datos_art['familia'] in ["PRODUCTOS", "SERVICIOS"] else 0
+                    f_edit = col_e2.selectbox("Familia", ["PRODUCTOS", "SERVICIOS"], index=fam_index)
+                    dept_opts = ["EXAMENES", "SERVICIOS", "MEDICAMENTO", "ALIMENTOS", "VACUNAS", "ROPA", "ACCESORIOS"]
+                    dept_index = dept_opts.index(datos_art['departamento']) if datos_art['departamento'] in dept_opts else 2
+                    d_edit = col_e3.selectbox("Depto", dept_opts, index=dept_index)
+                    
+                    c_ia1, c_ia2 = st.columns([3, 1])
+                    c_edit = c_ia1.text_input("Componentes", value=st.session_state["edit_comp_val"])
+                    
+                    st.write("") # Espaciador
+                    if c_ia2.button("✨ Sugerir con IA"):
+                        res = obtener_componentes_ia(n_edit, API_KEY_GLOBAL)
+                        if "ERROR" not in res:
+                            st.session_state["edit_comp_val"] = res
+                            st.rerun()
+                        else: st.error(res)
+                    
+                    col_e4, col_e5 = st.columns(2)
+                    min_edit = col_e4.number_input("Stock Mín", min_value=0, value=int(datos_art['stock_minimo']))
+                    max_edit = col_e5.number_input("Stock Máx", min_value=1, value=int(datos_art['stock_maximo']))
+                    
+                    img_upload = st.file_uploader("Subir / Actualizar Imagen", type=["jpg", "png", "jpeg"])
+                    
+                    col_btn_e1, col_btn_e2 = st.columns(2)
+                    if col_btn_e1.button("✅ Guardar Cambios al Artículo", type="primary"):
+                        if n_edit.strip() == "": st.error("El nombre no puede estar vacío.")
+                        else:
+                            conn = get_connection()
+                            try:
+                                c = conn.cursor()
+                                if img_upload:
+                                    img_b64 = base64.b64encode(img_upload.getvalue()).decode()
+                                    c.execute("UPDATE insumos SET nombre_articulo=%s, familia=%s, departamento=%s, componentes=%s, stock_minimo=%s, stock_maximo=%s, imagen_b64=%s WHERE id_insumo=%s", 
+                                              (n_edit.strip().upper(), f_edit, d_edit, c_edit, min_edit, max_edit, img_b64, int(datos_art['id_insumo'])))
+                                else:
+                                    c.execute("UPDATE insumos SET nombre_articulo=%s, familia=%s, departamento=%s, componentes=%s, stock_minimo=%s, stock_maximo=%s WHERE id_insumo=%s", 
+                                              (n_edit.strip().upper(), f_edit, d_edit, c_edit, min_edit, max_edit, int(datos_art['id_insumo'])))
+                                conn.commit()
+                                st.success("Artículo actualizado.")
+                                time.sleep(1); st.rerun()
+                            except IntegrityError: st.error("Ese nombre ya está en uso.")
+                            finally: conn.close()
+                            
+                    if col_btn_e2.button("🗑️ Eliminar Artículo"):
                         conn = get_connection()
                         try:
                             c = conn.cursor()
-                            c.execute("UPDATE insumos SET componentes = %s WHERE id_insumo = %s", (n_comp, int(df_comp[df_comp['nombre_articulo'] == art_comp].iloc[0]['id_insumo'])))
-                            conn.commit(); st.success("Actualizado."); time.sleep(1); st.rerun()
+                            c.execute("DELETE FROM insumos WHERE id_insumo = %s", (int(datos_art['id_insumo']),))
+                            conn.commit()
+                            st.success("Artículo eliminado.")
+                            time.sleep(1); st.rerun()
+                        except IntegrityError: st.error("⚠️ No se puede eliminar: el artículo tiene historial.")
                         finally: conn.close()
-                        
-            with tab_c4:
-                st.write("Ajusta las metas de inventario para que el sistema calcule los pedidos por ti.")
-                conn = get_connection()
-                try: df_stock = pd.read_sql_query("SELECT id_insumo, nombre_articulo, stock_minimo, stock_maximo FROM insumos ORDER BY nombre_articulo", conn)
-                finally: conn.close()
-                if not df_stock.empty:
-                    art_stk = st.selectbox("Artículo a editar:", df_stock['nombre_articulo'].tolist(), key="s_stk")
-                    datos_stk = df_stock[df_stock['nombre_articulo'] == art_stk].iloc[0]
-                    col_m1, col_m2 = st.columns(2)
-                    n_min = col_m1.number_input("Nuevo Stock Mínimo", min_value=0, value=int(datos_stk['stock_minimo']))
-                    n_max = col_m2.number_input("Nuevo Stock Máximo", min_value=1, value=int(datos_stk['stock_maximo']))
-                    if st.button("Guardar Límites", type="primary"):
-                        conn = get_connection()
-                        try:
-                            c = conn.cursor()
-                            c.execute("UPDATE insumos SET stock_minimo = %s, stock_maximo = %s WHERE id_insumo = %s", (n_min, n_max, int(datos_stk['id_insumo'])))
-                            conn.commit(); st.success("Límites actualizados."); time.sleep(1); st.rerun()
-                        finally: conn.close()
-            
-            with tab_c5:
+                else:
+                    st.info("No hay artículos en el catálogo.")
+                    
+            with tab_masiva:
                 st.write("**Carga Masiva desde Excel**")
                 st.info("El archivo Excel debe tener la columna (en mayúsculas): PRODUCTO. Opcionales: MINIMO, MAXIMO, FAMILIA, DEPARTAMENTO.")
                 archivo_masivo = st.file_uploader("Sube tu catálogo completo", type=["xls", "xlsx"])
@@ -634,60 +673,6 @@ elif rol == "Administrador":
                                 conn.close()
                     else:
                         st.error("❌ El archivo no tiene la columna 'PRODUCTO'. Revisa el encabezado de tu Excel.")
-                        
-            with tab_c6:
-                st.write("**Modificar o Eliminar Artículo del Catálogo**")
-                conn = get_connection()
-                try: df_edit = pd.read_sql_query("SELECT * FROM insumos ORDER BY nombre_articulo", conn)
-                finally: conn.close()
-                
-                if not df_edit.empty:
-                    art_edit = st.selectbox("Selecciona el artículo a modificar:", df_edit['nombre_articulo'].tolist(), key="sel_ed")
-                    datos_art = df_edit[df_edit['nombre_articulo'] == art_edit].iloc[0]
-                    
-                    col_e1, col_e2, col_e3 = st.columns(3)
-                    n_edit = col_e1.text_input("Nuevo Nombre", value=datos_art['nombre_articulo'])
-                    
-                    fam_index = ["PRODUCTOS", "SERVICIOS"].index(datos_art['familia']) if datos_art['familia'] in ["PRODUCTOS", "SERVICIOS"] else 0
-                    f_edit = col_e2.selectbox("Nueva Familia", ["PRODUCTOS", "SERVICIOS"], index=fam_index)
-                    
-                    dept_opts = ["EXAMENES", "SERVICIOS", "MEDICAMENTO", "ALIMENTOS", "VACUNAS", "ROPA", "ACCESORIOS"]
-                    dept_index = dept_opts.index(datos_art['departamento']) if datos_art['departamento'] in dept_opts else 2
-                    d_edit = col_e3.selectbox("Nuevo Depto", dept_opts, index=dept_index)
-                    
-                    col_btn_e1, col_btn_e2 = st.columns(2)
-                    if col_btn_e1.button("Actualizar Datos", type="primary"):
-                        if n_edit.strip() == "":
-                            st.error("El nombre no puede estar vacío.")
-                        else:
-                            conn = get_connection()
-                            try:
-                                c = conn.cursor()
-                                c.execute("UPDATE insumos SET nombre_articulo = %s, familia = %s, departamento = %s WHERE id_insumo = %s", (n_edit.strip().upper(), f_edit, d_edit, int(datos_art['id_insumo'])))
-                                conn.commit()
-                                st.success("Artículo actualizado correctamente.")
-                                time.sleep(1.5)
-                                st.rerun()
-                            except IntegrityError:
-                                st.error("Ya existe otro artículo con ese nombre.")
-                            finally:
-                                conn.close()
-                                
-                    if col_btn_e2.button("🗑️ Eliminar Artículo"):
-                        conn = get_connection()
-                        try:
-                            c = conn.cursor()
-                            c.execute("DELETE FROM insumos WHERE id_insumo = %s", (int(datos_art['id_insumo']),))
-                            conn.commit()
-                            st.success("Artículo eliminado.")
-                            time.sleep(1.5)
-                            st.rerun()
-                        except IntegrityError:
-                            st.error("⚠️ No se puede eliminar: el artículo ya tiene historial de compras o solicitudes. Si ya no lo usas, actualiza su nombre a 'DESCONTINUADO - [Nombre]'.")
-                        finally:
-                            conn.close()
-                else:
-                    st.info("No hay artículos en el catálogo.")
                         
         elif menu_admin == "Gestión de Personal":
             st.subheader("👥 Gestión de Personal")
