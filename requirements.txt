@@ -3,3 +3,4 @@ pandas
 google-generativeai
 psycopg2-binary
 openpyxl
+xlrd
