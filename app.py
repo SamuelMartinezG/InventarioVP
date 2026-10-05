@@ -537,7 +537,8 @@ elif rol == "Administrador":
                             conn = get_connection()
                             try:
                                 c = conn.cursor()
-                                c.execute("INSERT INTO insumos (nombre_articulo, familia, departamento, componentes, existencia, stock_minimo, stock_maximo) VALUES (%s, %s, %s, %s, 0, %s, %s)", (n_nuevo.strip().upper(), f_nuevo, d_nuevo, comp_nuevo, s_min_nuevo, s_max_nuevo))
+                                comp_nuevo_clean = comp_nuevo.strip().upper() if comp_nuevo else ""
+                                c.execute("INSERT INTO insumos (nombre_articulo, familia, departamento, componentes, existencia, stock_minimo, stock_maximo) VALUES (%s, %s, %s, %s, 0, %s, %s)", (n_nuevo.strip().upper(), f_nuevo, d_nuevo, comp_nuevo_clean, s_min_nuevo, s_max_nuevo))
                                 conn.commit()
                                 st.success("Agregado exitosamente.")
                                 time.sleep(1); st.rerun()
@@ -559,7 +560,6 @@ elif rol == "Administrador":
                     st.write("---")
                     st.write("### ✏️ Editar / Eliminar Artículo")
                     
-                    # 1ra MAGIA: Ordenar para que los productos sin foto (🚫) salgan primero
                     df_cat['tiene_img'] = df_cat['imagen_b64'].apply(lambda x: 1 if pd.notna(x) and str(x).strip() != "" else 0)
                     df_cat_ordenado = df_cat.sort_values(by=['tiene_img', 'nombre_articulo'])
                     
@@ -568,11 +568,10 @@ elif rol == "Administrador":
                     if art_edit:
                         datos_art = df_cat_ordenado[df_cat_ordenado['nombre_articulo'] == art_edit].iloc[0]
                         
-                        # 2da MAGIA: Limpiar la caché si cambias de producto o acabas de guardar
                         if st.session_state.get("last_edit_art") != art_edit:
                             st.session_state["edit_comp_val"] = datos_art['componentes'] if pd.notna(datos_art['componentes']) else ""
                             st.session_state["last_edit_art"] = art_edit
-                            st.session_state["file_uploader_key"] = int(time.time()) # Llave destructiva para borrar la foto anterior
+                            st.session_state["file_uploader_key"] = int(time.time())
                         
                         col_e1, col_e2, col_e3 = st.columns(3)
                         n_edit = col_e1.text_input("Nombre", value=datos_art['nombre_articulo'])
@@ -589,7 +588,8 @@ elif rol == "Administrador":
                         if c_ia2.button("✨ Sugerir con IA"):
                             res = obtener_componentes_ia(n_edit, API_KEY_GLOBAL)
                             if "ERROR" not in res:
-                                st.session_state["edit_comp_val"] = res
+                                # 🔥 BLINDAJE 1: Fuerza mayúsculas al recibir de Gemini
+                                st.session_state["edit_comp_val"] = res.upper() 
                                 st.rerun()
                             else: st.error(res)
                         
@@ -607,17 +607,18 @@ elif rol == "Administrador":
                                 conn = get_connection()
                                 try:
                                     c = conn.cursor()
+                                    # 🔥 BLINDAJE 2: Fuerza mayúsculas justo antes de guardar a la base de datos
+                                    c_edit_clean = c_edit.strip().upper() if c_edit else "" 
+                                    
                                     if img_upload:
                                         img_b64 = base64.b64encode(img_upload.getvalue()).decode()
                                         c.execute("UPDATE insumos SET nombre_articulo=%s, familia=%s, departamento=%s, componentes=%s, stock_minimo=%s, stock_maximo=%s, imagen_b64=%s WHERE id_insumo=%s", 
-                                                  (n_edit.strip().upper(), f_edit, d_edit, c_edit, min_edit, max_edit, img_b64, int(datos_art['id_insumo'])))
+                                                  (n_edit.strip().upper(), f_edit, d_edit, c_edit_clean, min_edit, max_edit, img_b64, int(datos_art['id_insumo'])))
                                     else:
                                         c.execute("UPDATE insumos SET nombre_articulo=%s, familia=%s, departamento=%s, componentes=%s, stock_minimo=%s, stock_maximo=%s WHERE id_insumo=%s", 
-                                                  (n_edit.strip().upper(), f_edit, d_edit, c_edit, min_edit, max_edit, int(datos_art['id_insumo'])))
+                                                  (n_edit.strip().upper(), f_edit, d_edit, c_edit_clean, min_edit, max_edit, int(datos_art['id_insumo'])))
                                     conn.commit()
                                     st.success("Artículo actualizado.")
-                                    
-                                    # Forzamos la limpieza absoluta para el siguiente producto
                                     st.session_state["last_edit_art"] = None
                                     time.sleep(1); st.rerun()
                                 except IntegrityError: st.error("Ese nombre ya está en uso.")
@@ -632,7 +633,7 @@ elif rol == "Administrador":
                                 st.success("Artículo eliminado.")
                                 st.session_state["last_edit_art"] = None
                                 time.sleep(1); st.rerun()
-                            except IntegrityError: st.error("⚠️️ No se puede eliminar: el artículo tiene historial.")
+                            except IntegrityError: st.error("⚠ No se puede eliminar: el artículo tiene historial.")
                             finally: conn.close()
                 else:
                     st.info("No hay artículos en el catálogo.")
