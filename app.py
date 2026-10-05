@@ -280,7 +280,7 @@ if rol == "Personal":
                     st.session_state.carrito = []
                     st.rerun()
 
-   elif menu_personal == "Consultar Inventario":
+elif menu_personal == "Consultar Inventario":
         st.title("📦 Visor de Existencias")
         conn = get_connection()
         try: df_inv = pd.read_sql_query("SELECT * FROM insumos ORDER BY nombre_articulo ASC", conn)
