@@ -280,7 +280,7 @@ if rol == "Personal":
                     st.session_state.carrito = []
                     st.rerun()
 
-elif menu_personal == "Consultar Inventario":
+    elif menu_personal == "Consultar Inventario":
         st.title("📦 Visor de Existencias")
         conn = get_connection()
         try: df_inv = pd.read_sql_query("SELECT * FROM insumos ORDER BY nombre_articulo ASC", conn)
@@ -296,7 +296,6 @@ elif menu_personal == "Consultar Inventario":
                 
                 st.write("---")
                 st.write("### 📋 Directorio General")
-                # Creamos la tabla limpia que pediste
                 df_mostrar = df_inv[['nombre_articulo', 'componentes', 'existencia']].copy()
                 df_mostrar['Imagen'] = df_inv['imagen_b64'].apply(lambda x: "✅" if pd.notna(x) and str(x).strip() != "" else "🚫")
                 df_mostrar.columns = ['Producto', 'Componentes', 'Existencia', 'Imagen']
