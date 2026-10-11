@@ -52,6 +52,9 @@ def init_db():
         c.execute('''CREATE TABLE IF NOT EXISTS personal (
                         id_personal SERIAL PRIMARY KEY,
                         nombre TEXT UNIQUE)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS areas (
+                        id_area SERIAL PRIMARY KEY,
+                        nombre_area TEXT UNIQUE)''')
         c.execute('''CREATE TABLE IF NOT EXISTS historial_entradas (
                         id_entrada SERIAL PRIMARY KEY,
                         fecha_hora TEXT,
@@ -60,12 +63,17 @@ def init_db():
                         tipo_movimiento TEXT,
                         comentarios TEXT,
                         FOREIGN KEY(id_insumo) REFERENCES insumos(id_insumo))''')
-        
         c.execute('''CREATE TABLE IF NOT EXISTS configuracion (
                         parametro TEXT PRIMARY KEY,
                         valor TEXT)''')
         
-        # Migraciones (Incluyendo Min y Max para Compras)
+        # Cargar áreas iniciales si la tabla está vacía
+        c.execute("SELECT COUNT(*) FROM areas")
+        if c.fetchone()[0] == 0:
+            for area_inicial in ["HOSPITALIZACIÓN", "CONSULTORIO 1", "CONSULTORIO 2", "LIMPIEZA", "RECEPCIÓN"]:
+                c.execute("INSERT INTO areas (nombre_area) VALUES (%s) ON CONFLICT DO NOTHING", (area_inicial,))
+        
+        # Migraciones de columnas
         c.execute("ALTER TABLE solicitudes ADD COLUMN IF NOT EXISTS quien_surte TEXT")
         c.execute("ALTER TABLE detalle_solicitud ADD COLUMN IF NOT EXISTS cantidad_entregada INTEGER")
         c.execute("ALTER TABLE insumos ADD COLUMN IF NOT EXISTS ruta_imagen TEXT")
@@ -73,6 +81,7 @@ def init_db():
         c.execute("ALTER TABLE insumos ADD COLUMN IF NOT EXISTS imagen_b64 TEXT")
         c.execute("ALTER TABLE insumos ADD COLUMN IF NOT EXISTS stock_minimo INTEGER DEFAULT 0")
         c.execute("ALTER TABLE insumos ADD COLUMN IF NOT EXISTS stock_maximo INTEGER DEFAULT 0")
+        c.execute("ALTER TABLE insumos ADD COLUMN IF NOT EXISTS cantidad_estandar INTEGER DEFAULT 0")
         conn.commit()
     finally:
         conn.close()
@@ -251,37 +260,62 @@ if rol == "Personal":
         st.title("🏥 Registro de Insumos")
         conn = get_connection()
         try:
-            insumos_df = pd.read_sql_query("SELECT id_insumo, nombre_articulo FROM insumos ORDER BY nombre_articulo ASC", conn)
+            insumos_df = pd.read_sql_query("SELECT id_insumo, nombre_articulo, COALESCE(cantidad_estandar, 0) as cantidad_estandar FROM insumos ORDER BY nombre_articulo ASC", conn)
             personal_df = pd.read_sql_query("SELECT nombre FROM personal ORDER BY nombre ASC", conn)
+            areas_df = pd.read_sql_query("SELECT nombre_area FROM areas ORDER BY nombre_area ASC", conn)
         finally:
             conn.close()
             
-        if insumos_df.empty or personal_df.empty:
-            st.warning("⚠️ El administrador debe agregar personal y artículos al catálogo.")
+        if insumos_df.empty or personal_df.empty or areas_df.empty:
+            st.warning("⚠️ El administrador debe agregar áreas, personal y artículos al catálogo.")
         else:
             st.write("### 1. Datos de la Solicitud")
             col1, col2 = st.columns(2)
-            area = col1.selectbox("Área", ["HOSPITALIZACIÓN", "CONSULTORIO 1", "CONSULTORIO 2", "LIMPIEZA", "RECEPCIÓN"])
+            area = col1.selectbox("Área", areas_df['nombre_area'].tolist())
             solicitante = col2.selectbox("Nombre del Solicitante", personal_df['nombre'].tolist())
             st.divider()
             
-            with st.form("form_agregar_producto", clear_on_submit=True):
-                col_a, col_b, col_c = st.columns([3, 1, 1])
-                articulo_seleccionado = col_a.selectbox("Artículo", insumos_df['nombre_articulo'].tolist())
-                cantidad = col_b.number_input("Cantidad", min_value=1, value=1, step=1)
-                if col_c.form_submit_button("➕ Agregar"):
-                    id_insumo = int(insumos_df.loc[insumos_df['nombre_articulo'] == articulo_seleccionado, 'id_insumo'].values[0])
-                    st.session_state.carrito.append({"id_insumo": id_insumo, "nombre": articulo_seleccionado, "cantidad": cantidad})
-                    st.success(f"{cantidad}x {articulo_seleccionado} agregado.")
+            st.write("### 2. Seleccionar Productos")
+            col_a, col_b, col_c = st.columns([3, 1.2, 1])
+            articulo_seleccionado = col_a.selectbox("Artículo", insumos_df['nombre_articulo'].tolist())
+            
+            # Revisamos si el artículo tiene cantidad estandarizada o es a petición
+            fila_art = insumos_df[insumos_df['nombre_articulo'] == articulo_seleccionado].iloc[0]
+            cant_estandar = int(fila_art['cantidad_estandar'])
+            id_insumo_sel = int(fila_art['id_insumo'])
+            
+            if cant_estandar > 0:
+                cantidad = col_b.number_input("Cantidad (Fija)", value=cant_estandar, disabled=True, key=f"cant_fija_{id_insumo_sel}")
+                col_a.caption(f"🔒 **Entrega estandarizada:** Este artículo se entrega en bloques fijos de **{cant_estandar} uds.**")
+            else:
+                cantidad = col_b.number_input("Cantidad (A petición)", min_value=1, value=1, step=1, key=f"cant_libre_{id_insumo_sel}")
+                col_a.caption("✍️ **Cantidad libre:** Ingresa las unidades necesarias según tus pacientes.")
+                
+            col_c.write("")
+            if col_c.button("➕ Agregar", use_container_width=True):
+                st.session_state.carrito.append({
+                    "id_insumo": id_insumo_sel, 
+                    "nombre": articulo_seleccionado, 
+                    "cantidad": cant_estandar if cant_estandar > 0 else cantidad,
+                    "es_fijo": True if cant_estandar > 0 else False
+                })
+                st.success(f"{cant_estandar if cant_estandar > 0 else cantidad}x {articulo_seleccionado} agregado.")
             
             if len(st.session_state.carrito) > 0:
                 st.divider()
                 st.write("### 🛒 Resumen de tu Pedido")
                 for idx, item in enumerate(st.session_state.carrito):
                     c1, c2, c3 = st.columns([4, 2, 1])
-                    c1.write(item['nombre'])
-                    nueva_cant = c2.number_input("Cantidad", min_value=1, value=item['cantidad'], step=1, key=f"ped_cant_{idx}", label_visibility="collapsed")
-                    if nueva_cant != item['cantidad']: st.session_state.carrito[idx]['cantidad'] = nueva_cant
+                    etiqueta_tipo = "🔒 *(Estandarizado)*" if item.get('es_fijo', False) else ""
+                    c1.write(f"{item['nombre']} {etiqueta_tipo}")
+                    
+                    if item.get('es_fijo', False):
+                        c2.number_input("Cantidad", value=item['cantidad'], disabled=True, key=f"ped_cant_{idx}", label_visibility="collapsed")
+                    else:
+                        nueva_cant = c2.number_input("Cantidad", min_value=1, value=item['cantidad'], step=1, key=f"ped_cant_{idx}", label_visibility="collapsed")
+                        if nueva_cant != item['cantidad']: 
+                            st.session_state.carrito[idx]['cantidad'] = nueva_cant
+                            
                     if c3.button("🗑️", key=f"del_ped_{idx}"):
                         st.session_state.carrito.pop(idx)
                         st.rerun()
@@ -408,7 +442,7 @@ elif rol == "Administrador":
             st.rerun()
             
         st.title("⚙ Panel de Administración")
-        menu_admin = st.sidebar.radio("Opciones", ["Surtir Solicitudes", "Entradas / Compras", "Subir Excel de Ventas", "Reportes y Exportación", "Catálogo de Insumos", "Gestión de Personal", "Configuración IA"])
+        menu_admin = st.sidebar.radio("Opciones", ["Surtir Solicitudes", "Entradas / Compras", "Subir Excel de Ventas", "Reportes y Exportación", "Catálogo de Insumos", "Gestión de Personal", "Gestión de Áreas", "Configuración IA"])        
         
         if menu_admin == "Surtir Solicitudes":
             st.subheader("📦 Solicitudes Pendientes")
@@ -592,9 +626,10 @@ elif rol == "Administrador":
                     d_nuevo = c3.selectbox("Depto", ["EXAMENES", "SERVICIOS", "MEDICAMENTO", "ALIMENTOS", "VACUNAS", "ROPA", "ACCESORIOS"])
                     comp_nuevo = st.text_input("Componentes", key="n_comp")
                     
-                    c4, c5 = st.columns(2)
+                    c4, c5, c6 = st.columns(3)
                     s_min_nuevo = c4.number_input("Stock Mínimo (Alerta)", min_value=0, value=2)
                     s_max_nuevo = c5.number_input("Stock Máximo (Meta a llenar)", min_value=1, value=10)
+                    s_est_nuevo = c6.number_input("Entrega Estandarizada (0 = A petición)", min_value=0, value=0)
                     
                     if st.button("Guardar Nuevo Producto", type="primary"):
                         if n_nuevo:
@@ -602,7 +637,9 @@ elif rol == "Administrador":
                             try:
                                 c = conn.cursor()
                                 comp_nuevo_clean = comp_nuevo.strip().upper() if comp_nuevo else ""
-                                c.execute("INSERT INTO insumos (nombre_articulo, familia, departamento, componentes, existencia, stock_minimo, stock_maximo) VALUES (%s, %s, %s, %s, 0, %s, %s)", (n_nuevo.strip().upper(), f_nuevo, d_nuevo, comp_nuevo_clean, s_min_nuevo, s_max_nuevo))
+                                c.execute("""INSERT INTO insumos (nombre_articulo, familia, departamento, componentes, existencia, stock_minimo, stock_maximo, cantidad_estandar) 
+                                             VALUES (%s, %s, %s, %s, 0, %s, %s, %s)""", 
+                                          (n_nuevo.strip().upper(), f_nuevo, d_nuevo, comp_nuevo_clean, s_min_nuevo, s_max_nuevo, s_est_nuevo))
                                 conn.commit()
                                 st.success("Agregado exitosamente.")
                                 time.sleep(1); st.rerun()
@@ -617,8 +654,9 @@ elif rol == "Administrador":
                 
                 if not df_cat.empty:
                     df_display = df_cat[['nombre_articulo', 'componentes', 'stock_minimo', 'stock_maximo']].copy()
+                    df_display['Entrega'] = df_cat['cantidad_estandar'].fillna(0).apply(lambda x: f"🔒 {int(x)} uds" if int(x) > 0 else "✍️ A petición")
                     df_display['Imagen'] = df_cat['imagen_b64'].apply(lambda x: "✅" if pd.notna(x) and str(x).strip() != "" else "🚫")
-                    df_display.columns = ['Producto', 'Componentes', 'Mínimo', 'Máximo', 'Imagen']
+                    df_display.columns = ['Producto', 'Componentes', 'Mínimo', 'Máximo', 'Entrega Hospital', 'Imagen']
                     st.dataframe(df_display, use_container_width=True, hide_index=True)
                     
                     st.write("---")
@@ -652,14 +690,15 @@ elif rol == "Administrador":
                         if c_ia2.button("✨ Sugerir con IA"):
                             res = obtener_componentes_ia(n_edit, API_KEY_GLOBAL)
                             if "ERROR" not in res:
-                                # 🔥 BLINDAJE 1: Fuerza mayúsculas al recibir de Gemini
                                 st.session_state["edit_comp_val"] = res.upper() 
                                 st.rerun()
                             else: st.error(res)
                         
-                        col_e4, col_e5 = st.columns(2)
+                        col_e4, col_e5, col_e6 = st.columns(3)
                         min_edit = col_e4.number_input("Stock Mín", min_value=0, value=int(datos_art['stock_minimo']))
                         max_edit = col_e5.number_input("Stock Máx", min_value=1, value=int(datos_art['stock_maximo']))
+                        est_actual = int(datos_art['cantidad_estandar']) if pd.notna(datos_art.get('cantidad_estandar')) else 0
+                        est_edit = col_e6.number_input("Entrega Estandarizada (0 = A petición)", min_value=0, value=est_actual)
                         
                         uploader_key = st.session_state.get("file_uploader_key", 0)
                         img_upload = st.file_uploader("Subir / Actualizar Imagen", type=["jpg", "png", "jpeg"], key=f"img_up_{uploader_key}")
@@ -671,16 +710,17 @@ elif rol == "Administrador":
                                 conn = get_connection()
                                 try:
                                     c = conn.cursor()
-                                    # 🔥 BLINDAJE 2: Fuerza mayúsculas justo antes de guardar a la base de datos
                                     c_edit_clean = c_edit.strip().upper() if c_edit else "" 
                                     
                                     if img_upload:
                                         img_b64 = base64.b64encode(img_upload.getvalue()).decode()
-                                        c.execute("UPDATE insumos SET nombre_articulo=%s, familia=%s, departamento=%s, componentes=%s, stock_minimo=%s, stock_maximo=%s, imagen_b64=%s WHERE id_insumo=%s", 
-                                                  (n_edit.strip().upper(), f_edit, d_edit, c_edit_clean, min_edit, max_edit, img_b64, int(datos_art['id_insumo'])))
+                                        c.execute("""UPDATE insumos SET nombre_articulo=%s, familia=%s, departamento=%s, componentes=%s, 
+                                                     stock_minimo=%s, stock_maximo=%s, cantidad_estandar=%s, imagen_b64=%s WHERE id_insumo=%s""", 
+                                                  (n_edit.strip().upper(), f_edit, d_edit, c_edit_clean, min_edit, max_edit, est_edit, img_b64, int(datos_art['id_insumo'])))
                                     else:
-                                        c.execute("UPDATE insumos SET nombre_articulo=%s, familia=%s, departamento=%s, componentes=%s, stock_minimo=%s, stock_maximo=%s WHERE id_insumo=%s", 
-                                                  (n_edit.strip().upper(), f_edit, d_edit, c_edit_clean, min_edit, max_edit, int(datos_art['id_insumo'])))
+                                        c.execute("""UPDATE insumos SET nombre_articulo=%s, familia=%s, departamento=%s, componentes=%s, 
+                                                     stock_minimo=%s, stock_maximo=%s, cantidad_estandar=%s WHERE id_insumo=%s""", 
+                                                  (n_edit.strip().upper(), f_edit, d_edit, c_edit_clean, min_edit, max_edit, est_edit, int(datos_art['id_insumo'])))
                                     conn.commit()
                                     st.success("Artículo actualizado.")
                                     st.session_state["last_edit_art"] = None
@@ -704,7 +744,7 @@ elif rol == "Administrador":
                     
             with tab_masiva:
                 st.write("**Carga Masiva desde Excel**")
-                st.info("El archivo Excel debe tener la columna (en mayúsculas): PRODUCTO. Opcionales: MINIMO, MAXIMO, FAMILIA, DEPARTAMENTO.")
+                st.info("El archivo Excel debe tener la columna (en mayúsculas): PRODUCTO. Opcionales: MINIMO, MAXIMO, ESTANDAR, FAMILIA, DEPARTAMENTO.")
                 archivo_masivo = st.file_uploader("Sube tu catálogo completo", type=["xls", "xlsx"])
                 
                 if archivo_masivo:
@@ -731,16 +771,19 @@ elif rol == "Administrador":
                                     
                                     try: s_max = int(float(row.get('MAXIMO', 0))) if 'MAXIMO' in df_masivo.columns else 0
                                     except: s_max = 0
+
+                                    try: s_est = int(float(row.get('ESTANDAR', 0))) if 'ESTANDAR' in df_masivo.columns else 0
+                                    except: s_est = 0
                                     
                                     try:
                                         c.execute("""
-                                            INSERT INTO insumos (nombre_articulo, familia, departamento, existencia, stock_minimo, stock_maximo) 
-                                            VALUES (%s, %s, %s, 0, %s, %s)
+                                            INSERT INTO insumos (nombre_articulo, familia, departamento, existencia, stock_minimo, stock_maximo, cantidad_estandar) 
+                                            VALUES (%s, %s, %s, 0, %s, %s, %s)
                                             ON CONFLICT (nombre_articulo) 
-                                            DO UPDATE SET stock_minimo = EXCLUDED.stock_minimo, stock_maximo = EXCLUDED.stock_maximo
-                                        """, (p, f, d, s_min, s_max))
+                                            DO UPDATE SET stock_minimo = EXCLUDED.stock_minimo, stock_maximo = EXCLUDED.stock_maximo, cantidad_estandar = EXCLUDED.cantidad_estandar
+                                        """, (p, f, d, s_min, s_max, s_est))
                                         count_ok += 1
-                                    except Exception as e:
+                                    except Exception:
                                         count_errores += 1
                                 
                                 conn.commit()
@@ -829,6 +872,77 @@ elif rol == "Administrador":
                             conn.close()
             else:
                 st.info("No hay personal registrado aún.")
+
+        elif menu_admin == "Gestión de Áreas":
+            st.subheader("🏥 Gestión de Áreas del Hospital")
+            
+            with st.form("form_agregar_area", clear_on_submit=True):
+                st.write("**Agregar Nueva Área**")
+                n_area = st.text_input("Nombre del Área (Ej: QUIRÓFANO, ESTÉTICA, LABORATORIO)")
+                if st.form_submit_button("Guardar Área") and n_area:
+                    conn = get_connection()
+                    try:
+                        c = conn.cursor()
+                        c.execute("INSERT INTO areas (nombre_area) VALUES (%s)", (n_area.strip().upper(),))
+                        conn.commit()
+                        st.success("Área registrada.")
+                        time.sleep(1)
+                        st.rerun()
+                    except IntegrityError:
+                        st.error("Esa área ya existe.")
+                    finally:
+                        conn.close()
+            
+            st.divider()
+            st.write("**Directorio de Áreas Activas**")
+            conn = get_connection()
+            try:
+                df_areas = pd.read_sql_query("SELECT id_area, nombre_area FROM areas ORDER BY nombre_area ASC", conn)
+            finally:
+                conn.close()
+                
+            if not df_areas.empty:
+                st.dataframe(df_areas, use_container_width=True, hide_index=True)
+                
+                st.write("---")
+                st.write("**Editar o Eliminar Área**")
+                area_sel = st.selectbox("Selecciona el área a modificar:", df_areas['nombre_area'].tolist())
+                
+                if area_sel:
+                    id_area_sel = int(df_areas[df_areas['nombre_area'] == area_sel].iloc[0]['id_area'])
+                    nuevo_nom_area = st.text_input("Modificar nombre del área:", value=area_sel)
+                    
+                    col_ba1, col_ba2 = st.columns(2)
+                    if col_ba1.button("Actualizar Área", type="primary"):
+                        if nuevo_nom_area.strip() == "":
+                            st.error("El nombre no puede estar vacío.")
+                        else:
+                            conn = get_connection()
+                            try:
+                                c = conn.cursor()
+                                c.execute("UPDATE areas SET nombre_area = %s WHERE id_area = %s", (nuevo_nom_area.strip().upper(), id_area_sel))
+                                conn.commit()
+                                st.success("Área actualizada.")
+                                time.sleep(1)
+                                st.rerun()
+                            except IntegrityError:
+                                st.error("Ese nombre de área ya existe.")
+                            finally:
+                                conn.close()
+                                
+                    if col_ba2.button("🗑️ Eliminar Área"):
+                        conn = get_connection()
+                        try:
+                            c = conn.cursor()
+                            c.execute("DELETE FROM areas WHERE id_area = %s", (id_area_sel,))
+                            conn.commit()
+                            st.success("Área eliminada.")
+                            time.sleep(1)
+                            st.rerun()
+                        finally:
+                            conn.close()
+            else:
+                st.info("No hay áreas registradas.")
             
         elif menu_admin == "Configuración IA":
             n_llave = st.text_input("API Key:", value=API_KEY_GLOBAL, type="password")
