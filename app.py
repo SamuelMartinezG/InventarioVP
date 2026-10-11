@@ -191,34 +191,33 @@ st.sidebar.title("Navegación")
 rol = st.sidebar.selectbox("Selecciona tu perfil:", ["Personal", "Administrador"])
 
 def mostrar_tarjeta_producto(datos_articulo):
-    # Ajustamos la columna de la imagen para que no ocupe tanto espacio horizontal
-    col_img, col_info = st.columns([1, 3]) 
-    with col_img:
-        imagen_b64 = datos_articulo.get('imagen_b64', None)
-        if pd.notna(imagen_b64) and str(imagen_b64).strip() != "":
-            try:
-                # 🛑 Aquí está el límite: forzamos el ancho a 250 píxeles máximo
-                st.image(base64.b64decode(imagen_b64), width=250)
-            except Exception:
-                st.info("📷 Error de imagen")
-        else:
-            st.info("📷 Imagen no asignada")
-    with col_info:
-        st.subheader(datos_articulo['nombre_articulo'])
-        if pd.notna(datos_articulo['componentes']) and datos_articulo['componentes'] not in ["", "N/A"]:
-            st.markdown(f"🧬 **Componentes:** {datos_articulo['componentes']}")
-        st.write(f"**Familia:** {datos_articulo['familia']} | **Departamento:** {datos_articulo['departamento']}")
-        
-        ex = datos_articulo['existencia']
-        s_min = datos_articulo.get('stock_minimo', 0)
-        s_max = datos_articulo.get('stock_maximo', 0)
-        
-        if ex > s_min: 
-            st.success(f"**Existencia Actual:** {ex} unidades (Óptimo)")
-        elif ex > 0 and ex <= s_min:
-            st.warning(f"**Existencia Actual:** {ex} unidades (Alerta: Stock Mínimo alcanzado)")
-        else: 
-            st.error(f"**Existencia Actual:** {ex} unidades (Agotado)")
+    with st.container(border=True):
+        col_img, col_info = st.columns([1, 2.2])
+        with col_img:
+            imagen_b64 = datos_articulo.get('imagen_b64', None)
+            if pd.notna(imagen_b64) and str(imagen_b64).strip() != "":
+                try:
+                    # Imagen en miniatura fija para mantener las 3 columnas uniformes
+                    st.image(base64.b64decode(imagen_b64), width=90)
+                except Exception:
+                    st.caption("📷 Error")
+            else:
+                st.caption("🚫 Sin foto")
+        with col_info:
+            st.markdown(f"**{datos_articulo['nombre_articulo']}**")
+            if pd.notna(datos_articulo['componentes']) and str(datos_articulo['componentes']).strip() not in ["", "N/A", "NONE"]:
+                st.caption(f"🧬 {datos_articulo['componentes']}")
+            st.caption(f"📁 {datos_articulo['departamento']}")
+            
+            ex = int(datos_articulo['existencia'])
+            s_min = int(datos_articulo.get('stock_minimo', 0))
+            
+            if ex > s_min:
+                st.markdown(f"🟢 **Existencia:** {ex} uds.")
+            elif ex > 0 and ex <= s_min:
+                st.markdown(f"🟡 **Existencia:** {ex} uds. *(Mínimo)*")
+            else:
+                st.markdown(f"🔴 **Agotado:** 0 uds.")
 
 # ==========================================
 # MÓDULO: PERSONAL 
@@ -291,41 +290,65 @@ if rol == "Personal":
     elif menu_personal == "Consultar Inventario":
         st.title("📦 Visor de Existencias")
         conn = get_connection()
-        try: df_inv = pd.read_sql_query("SELECT * FROM insumos ORDER BY nombre_articulo ASC", conn)
-        finally: conn.close()
+        try: 
+            df_inv = pd.read_sql_query("SELECT * FROM insumos ORDER BY nombre_articulo ASC", conn)
+        finally: 
+            conn.close()
             
         if not df_inv.empty:
             tab_b1, tab_b2 = st.tabs(["🔍 Búsqueda Normal", "🤖 Asistente Médico (IA)"])
+            
             with tab_b1:
-                st.write("**Buscador de Detalles:**")
-                articulo_buscar = st.selectbox("Selecciona un artículo para ver su foto y detalles específicos:", [""] + df_inv['nombre_articulo'].tolist())
-                if articulo_buscar:
-                    mostrar_tarjeta_producto(df_inv[df_inv['nombre_articulo'] == articulo_buscar].iloc[0])
+                col_f1, col_f2 = st.columns([2, 1])
+                articulo_buscar = col_f1.selectbox(
+                    "Buscar un artículo específico:", 
+                    ["TODOS"] + df_inv['nombre_articulo'].tolist()
+                )
+                deptos_disponibles = ["TODOS"] + sorted(df_inv['departamento'].dropna().unique().tolist())
+                depto_filtro = col_f2.selectbox("Filtrar por Departamento:", deptos_disponibles)
+                
+                # Filtramos el catálogo según lo que elija el usuario
+                df_filtrado = df_inv.copy()
+                if depto_filtro != "TODOS":
+                    df_filtrado = df_filtrado[df_filtrado['departamento'] == depto_filtro]
+                if articulo_buscar != "TODOS":
+                    df_filtrado = df_filtrado[df_filtrado['nombre_articulo'] == articulo_buscar]
                 
                 st.write("---")
-                st.write("### 📋 Directorio General")
-                df_mostrar = df_inv[['nombre_articulo', 'componentes', 'existencia']].copy()
-                df_mostrar['Imagen'] = df_inv['imagen_b64'].apply(lambda x: "✅" if pd.notna(x) and str(x).strip() != "" else "🚫")
-                df_mostrar.columns = ['Producto', 'Componentes', 'Existencia', 'Imagen']
-                st.dataframe(df_mostrar, use_container_width=True, hide_index=True)
+                st.write(f"### 📋 Catálogo Visual ({len(df_filtrado)} productos)")
+                
+                # Mostrar resultados en cuadrícula de 3 columnas
+                cols_cat = st.columns(3)
+                for idx, (_, row) in enumerate(df_filtrado.iterrows()):
+                    with cols_cat[idx % 3]:
+                        mostrar_tarjeta_producto(row)
                 
             with tab_b2:
-                consulta_medico = st.text_input("Consulta a la IA (Ej: 'Antibiótico en suspensión')")
+                consulta_medico = st.text_input("Consulta a la IA (Ej: 'Antiinflamatorio ocular')")
                 if st.button("Consultar ✨", type="primary"):
-                    if not API_KEY_GLOBAL: st.error("⚠ IA no configurada.")
-                    elif not consulta_medico: st.warning("Escribe tu consulta.")
+                    if not API_KEY_GLOBAL: 
+                        st.error("⚠ IA no configurada.")
+                    elif not consulta_medico: 
+                        st.warning("Escribe tu consulta.")
                     else:
-                        with st.spinner("Analizando..."):
+                        with st.spinner("Analizando inventario..."):
                             resultados_ia, error_ia = recomendar_productos_ia(consulta_medico, df_inv, API_KEY_GLOBAL)
-                            if error_ia: st.error(f"❌ Error: {error_ia}")
-                            elif not resultados_ia or "NINGUNO" in [r.upper() for r in resultados_ia]: st.warning("No se encontró nada.")
+                            if error_ia: 
+                                st.error(f"❌ Error: {error_ia}")
+                            elif not resultados_ia or "NINGUNO" in [r.upper() for r in resultados_ia]: 
+                                st.warning("No se encontró ningún producto relacionado.")
                             else:
+                                st.write("---")
+                                cols_ia = st.columns(3)
+                                col_idx = 0
                                 for nombre_sugerido in resultados_ia:
                                     match = df_inv[df_inv['nombre_articulo'].str.upper() == nombre_sugerido.upper()]
                                     if not match.empty:
-                                        st.write("---")
-                                        mostrar_tarjeta_producto(match.iloc[0])
-        else: st.info("Catálogo vacío.")
+                                        with cols_ia[col_idx % 3]:
+                                            mostrar_tarjeta_producto(match.iloc[0])
+                                        col_idx += 1
+        else: 
+            st.info("Catálogo vacío.")
 
 # ==========================================
 # MÓDULO: ADMINISTRADOR
