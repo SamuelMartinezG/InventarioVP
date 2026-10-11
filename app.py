@@ -318,9 +318,9 @@ if rol == "Personal":
             
             with tab_b1:
                 col_f1, col_f2 = st.columns([2, 1])
-                articulo_buscar = col_f1.selectbox(
-                    "Buscar un artículo específico:", 
-                    ["TODOS"] + df_inv['nombre_articulo'].tolist()
+                busqueda_texto = col_f1.text_input(
+                    "🔍 Buscar producto o sustancia (Presiona Enter para filtrar):", 
+                    placeholder="Ej: BRAVECTO, TRAMADOL, GOTAS..."
                 )
                 deptos_disponibles = ["TODOS"] + sorted(df_inv['departamento'].dropna().unique().tolist())
                 depto_filtro = col_f2.selectbox("Filtrar por Departamento:", deptos_disponibles)
@@ -328,17 +328,29 @@ if rol == "Personal":
                 df_filtrado = df_inv.copy()
                 if depto_filtro != "TODOS":
                     df_filtrado = df_filtrado[df_filtrado['departamento'] == depto_filtro]
-                if articulo_buscar != "TODOS":
-                    df_filtrado = df_filtrado[df_filtrado['nombre_articulo'] == articulo_buscar]
+                
+                # Filtro tipo Excel: busca cualquier coincidencia de palabras en Nombre o Componentes
+                if busqueda_texto.strip() != "":
+                    palabras = busqueda_texto.strip().upper().split()
+                    texto_busqueda = (
+                        df_filtrado['nombre_articulo'].fillna('').astype(str) + " " + 
+                        df_filtrado['componentes'].fillna('').astype(str)
+                    ).str.upper()
+                    
+                    for palabra in palabras:
+                        df_filtrado = df_filtrado[texto_busqueda.str.contains(palabra, na=False, regex=False)]
+                        texto_busqueda = texto_busqueda.loc[df_filtrado.index]
                 
                 st.write("---")
-                st.write(f"### 📋 Catálogo Visual ({len(df_filtrado)} productos)")
+                st.write(f"### 📋 Catálogo Visual ({len(df_filtrado)} productos encontrados)")
                 
-                # Cuadrícula de 2 columnas en PC (en móvil se vuelve 1 columna automáticamente)
-                cols_cat = st.columns(2)
-                for idx, (_, row) in enumerate(df_filtrado.iterrows()):
-                    with cols_cat[idx % 2]:
-                        mostrar_tarjeta_producto(row)
+                if df_filtrado.empty:
+                    st.warning("No se encontraron productos que coincidan con tu búsqueda.")
+                else:
+                    cols_cat = st.columns(2)
+                    for idx, (_, row) in enumerate(df_filtrado.iterrows()):
+                        with cols_cat[idx % 2]:
+                            mostrar_tarjeta_producto(row)
                 
             with tab_b2:
                 consulta_medico = st.text_input("Consulta a la IA (Ej: 'Antiinflamatorio ocular')")
@@ -356,7 +368,6 @@ if rol == "Personal":
                                 st.warning("No se encontró ningún producto relacionado.")
                             else:
                                 st.write("---")
-                                # También en 2 columnas para los resultados de IA
                                 cols_ia = st.columns(2)
                                 col_idx = 0
                                 for nombre_sugerido in resultados_ia:
