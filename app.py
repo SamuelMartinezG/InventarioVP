@@ -191,14 +191,32 @@ st.sidebar.title("Navegación")
 rol = st.sidebar.selectbox("Selecciona tu perfil:", ["Personal", "Administrador"])
 
 def mostrar_tarjeta_producto(datos_articulo):
+    # Regla visual inteligente: controla el tamaño en PC (160px) y lo agranda en Móvil (230px)
+    st.markdown("""
+        <style>
+        div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stImage"] img {
+            max-width: 160px !important;
+            max-height: 160px !important;
+            object-fit: contain !important;
+            margin: 0 auto !important;
+            display: block !important;
+        }
+        @media (max-width: 768px) {
+            div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stImage"] img {
+                max-width: 230px !important;
+                max-height: 230px !important;
+            }
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
     with st.container(border=True):
-        col_img, col_info = st.columns([1, 2.2])
+        col_img, col_info = st.columns([1.2, 2])
         with col_img:
             imagen_b64 = datos_articulo.get('imagen_b64', None)
             if pd.notna(imagen_b64) and str(imagen_b64).strip() != "":
                 try:
-                    # Imagen en miniatura fija para mantener las 3 columnas uniformes
-                    st.image(base64.b64decode(imagen_b64), width=90)
+                    st.image(base64.b64decode(imagen_b64), use_container_width=True)
                 except Exception:
                     st.caption("📷 Error")
             else:
@@ -307,7 +325,6 @@ if rol == "Personal":
                 deptos_disponibles = ["TODOS"] + sorted(df_inv['departamento'].dropna().unique().tolist())
                 depto_filtro = col_f2.selectbox("Filtrar por Departamento:", deptos_disponibles)
                 
-                # Filtramos el catálogo según lo que elija el usuario
                 df_filtrado = df_inv.copy()
                 if depto_filtro != "TODOS":
                     df_filtrado = df_filtrado[df_filtrado['departamento'] == depto_filtro]
@@ -317,10 +334,10 @@ if rol == "Personal":
                 st.write("---")
                 st.write(f"### 📋 Catálogo Visual ({len(df_filtrado)} productos)")
                 
-                # Mostrar resultados en cuadrícula de 3 columnas
-                cols_cat = st.columns(3)
+                # Cuadrícula de 2 columnas en PC (en móvil se vuelve 1 columna automáticamente)
+                cols_cat = st.columns(2)
                 for idx, (_, row) in enumerate(df_filtrado.iterrows()):
-                    with cols_cat[idx % 3]:
+                    with cols_cat[idx % 2]:
                         mostrar_tarjeta_producto(row)
                 
             with tab_b2:
@@ -339,12 +356,13 @@ if rol == "Personal":
                                 st.warning("No se encontró ningún producto relacionado.")
                             else:
                                 st.write("---")
-                                cols_ia = st.columns(3)
+                                # También en 2 columnas para los resultados de IA
+                                cols_ia = st.columns(2)
                                 col_idx = 0
                                 for nombre_sugerido in resultados_ia:
                                     match = df_inv[df_inv['nombre_articulo'].str.upper() == nombre_sugerido.upper()]
                                     if not match.empty:
-                                        with cols_ia[col_idx % 3]:
+                                        with cols_ia[col_idx % 2]:
                                             mostrar_tarjeta_producto(match.iloc[0])
                                         col_idx += 1
         else: 
