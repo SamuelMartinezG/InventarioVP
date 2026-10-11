@@ -195,7 +195,7 @@ def mostrar_tarjeta_producto(datos_articulo):
     st.markdown("""
         <style>
         div[data-testid="stVerticalBlockBorderWrapper"] {
-            border: 1px solid rgba(128, 128, 128, 0.08) !important;
+            border: 1px solid rgba(128, 128, 128, 0.04) !important;
             border-radius: 10px !important;
         }
         div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stImage"] img {
