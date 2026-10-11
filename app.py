@@ -200,7 +200,7 @@ st.sidebar.title("Navegación")
 rol = st.sidebar.selectbox("Selecciona tu perfil:", ["Personal", "Administrador"])
 
 def mostrar_tarjeta_producto(datos_articulo):
-    # Regla visual: suaviza el borde de la caja (0.08) y controla el tamaño de las fotos
+    # Regla visual: suaviza el borde de la caja y controla el tamaño de las fotos
     st.markdown("""
         <style>
         div[data-testid="stVerticalBlockBorderWrapper"] {
@@ -306,7 +306,7 @@ if rol == "Personal":
                 st.write("### 🛒 Resumen de tu Pedido")
                 for idx, item in enumerate(st.session_state.carrito):
                     c1, c2, c3 = st.columns([4, 2, 1])
-                    etiqueta_tipo = "🔒 *(Estandarizado)*" if item.get('es_fijo', False) else ""
+                    etiqueta_tipo = "🔒 *(Estandarizado)*" if item.get('es_fijo', False) else "✍️ *(A petición)*"
                     c1.write(f"{item['nombre']} {etiqueta_tipo}")
                     
                     if item.get('es_fijo', False):
@@ -425,7 +425,6 @@ elif rol == "Administrador":
     if not st.session_state.admin_auth:
         st.title("🔒 Acceso Restringido")
         with st.form("form_login"):
-            # Separamos la caja de texto y el botón para que se dibujen bien
             pwd_ingresada = st.text_input("Contraseña", type="password")
             submit_login = st.form_submit_button("Ingresar")
             
@@ -450,22 +449,40 @@ elif rol == "Administrador":
             try:
                 lista_personal = [""] + pd.read_sql_query("SELECT nombre FROM personal ORDER BY nombre ASC", conn)['nombre'].tolist()
                 solicitudes_df = pd.read_sql_query("SELECT * FROM solicitudes WHERE UPPER(estado) = 'PENDIENTE' ORDER BY fecha_hora ASC", conn)
-                if solicitudes_df.empty: st.info("No hay solicitudes.")
+                if solicitudes_df.empty: 
+                    st.info("No hay solicitudes.")
                 else:
                     for _, row in solicitudes_df.iterrows():
                         id_sol = row['id_solicitud']
-                        with st.expander(f"🔴 Solicitud #{id_sol} - {row['solicitante']} - {row['fecha_hora']}"):
-                            detalles_df = pd.read_sql_query(f"SELECT d.id_detalle, d.cantidad_pedida, i.nombre_articulo, i.id_insumo FROM detalle_solicitud d JOIN insumos i ON d.id_insumo = i.id_insumo WHERE d.id_solicitud = {id_sol}", conn)
+                        with st.expander(f"🔴 Solicitud #{id_sol} | Área: {row['area']} | Solicitante: {row['solicitante']} ({row['fecha_hora']})"):
+                            detalles_df = pd.read_sql_query(f"""
+                                SELECT d.id_detalle, d.cantidad_pedida, i.nombre_articulo, i.id_insumo, COALESCE(i.cantidad_estandar, 0) as cantidad_estandar 
+                                FROM detalle_solicitud d 
+                                JOIN insumos i ON d.id_insumo = i.id_insumo 
+                                WHERE d.id_solicitud = {id_sol}
+                            """, conn)
                             with st.form(key=f"form_surtir_{id_sol}"):
                                 quien_surte = st.selectbox("¿Quién entrega?", lista_personal, key=f"quien_{id_sol}")
+                                st.markdown("**Detalle de artículos solicitados:**")
                                 cantidades_a_entregar = {}
                                 for _, det_row in detalles_df.iterrows():
-                                    c1_i, c2_i, c3_i = st.columns([3, 1, 1.5])
-                                    c1_i.write(det_row['nombre_articulo'])
-                                    c2_i.write(str(det_row['cantidad_pedida']))
-                                    cantidades_a_entregar[det_row['id_detalle']] = c3_i.number_input("Entregar", min_value=0, value=int(det_row['cantidad_pedida']), step=1, label_visibility="collapsed")
+                                    c1_i, c2_i, c3_i = st.columns([3.5, 1, 1.5])
+                                    est_val = int(det_row['cantidad_estandar'])
+                                    etiqueta_est = f"🔒 *(Estandarizado: {est_val} uds)*" if est_val > 0 else "✍️ *(A petición)*"
+                                    
+                                    c1_i.markdown(f"**{det_row['nombre_articulo']}** {etiqueta_est}")
+                                    c2_i.write(f"Pedido: **{det_row['cantidad_pedida']}**")
+                                    cantidades_a_entregar[det_row['id_detalle']] = c3_i.number_input(
+                                        "Entregar", 
+                                        min_value=0, 
+                                        value=int(det_row['cantidad_pedida']), 
+                                        step=1, 
+                                        key=f"ent_{id_sol}_{det_row['id_detalle']}",
+                                        label_visibility="collapsed"
+                                    )
                                 if st.form_submit_button(f"✅ Surtir #{id_sol}"):
-                                    if not quien_surte: st.error("⚠️ Selecciona quién entrega.")
+                                    if not quien_surte: 
+                                        st.error("⚠️ Selecciona quién entrega.")
                                     else:
                                         c = conn.cursor()
                                         c.execute("UPDATE solicitudes SET estado = 'SURTIDA', quien_surte = %s WHERE id_solicitud = %s", (quien_surte, id_sol))
@@ -477,7 +494,8 @@ elif rol == "Administrador":
                                         st.success("Surtido.")
                                         time.sleep(1)
                                         st.rerun()
-            finally: conn.close()
+            finally: 
+                conn.close()
 
         elif menu_admin == "Entradas / Compras":
             st.subheader("📥 Registrar Ingreso")
@@ -513,12 +531,14 @@ elif rol == "Administrador":
                         if st.form_submit_button("Crear y Agregar") and n_nuevo:
                             try:
                                 c = conn.cursor()
-                                c.execute("INSERT INTO insumos (nombre_articulo, familia, departamento, componentes, existencia, stock_minimo, stock_maximo) VALUES (%s, %s, %s, %s, 0, %s, %s) RETURNING id_insumo", (n_nuevo.strip().upper(), f_nueva, d_nuevo, comp_nuevo, s_min, s_max))
+                                comp_clean = comp_nuevo.strip().upper() if comp_nuevo else ""
+                                c.execute("INSERT INTO insumos (nombre_articulo, familia, departamento, componentes, existencia, stock_minimo, stock_maximo) VALUES (%s, %s, %s, %s, 0, %s, %s) RETURNING id_insumo", (n_nuevo.strip().upper(), f_nueva, d_nuevo, comp_clean, s_min, s_max))
                                 id_creado = c.fetchone()[0]
                                 conn.commit()
-                                st.session_state.carrito_entradas.append({"id_insumo": id_creado, "nombre": n_nuevo.upper(), "cajas": c_n, "piezas_caja": p_n, "total": c_n * p_n})
+                                st.session_state.carrito_entradas.append({"id_insumo": id_creado, "nombre": n_nuevo.strip().upper(), "cajas": c_n, "piezas_caja": p_n, "total": c_n * p_n})
                                 st.rerun()
-                            except IntegrityError: st.error("Ya existe.")
+                            except IntegrityError: 
+                                st.error("Ya existe.")
 
                 if st.session_state.carrito_entradas:
                     st.divider()
@@ -531,7 +551,9 @@ elif rol == "Administrador":
                             st.session_state.carrito_entradas[idx].update({"cajas": n_c, "piezas_caja": n_p, "total": n_c * n_p})
                             st.rerun()
                         c4.write(f"**{item['total']}**")
-                        if c5.button("🗑️", key=f"de_{idx}"): st.session_state.carrito_entradas.pop(idx); st.rerun()
+                        if c5.button("🗑️", key=f"de_{idx}"): 
+                            st.session_state.carrito_entradas.pop(idx)
+                            st.rerun()
 
                     tipo = st.selectbox("Tipo", ["Compra / Factura", "Ajuste"])
                     coment = st.text_input("Folio Factura")
@@ -542,7 +564,8 @@ elif rol == "Administrador":
                         info_a = ""
                         if arch:
                             nom = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{arch.name}"
-                            with open(os.path.join("facturas", nom), "wb") as f: f.write(arch.getbuffer())
+                            with open(os.path.join("facturas", nom), "wb") as f: 
+                                f.write(arch.getbuffer())
                             info_a = f" | Arch: {nom}"
                         for item in st.session_state.carrito_entradas:
                             c.execute("INSERT INTO historial_entradas (fecha_hora, id_insumo, cantidad_agregada, tipo_movimiento, comentarios) VALUES (%s, %s, %s, %s, %s)", (fh, item['id_insumo'], item['total'], tipo, f"{item['cajas']} cj de {item['piezas_caja']}. Ref: {coment}{info_a}"))
@@ -550,8 +573,10 @@ elif rol == "Administrador":
                         conn.commit()
                         st.session_state.carrito_entradas = []
                         st.success("Guardado.")
-                        time.sleep(1); st.rerun()
-            finally: conn.close()
+                        time.sleep(1)
+                        st.rerun()
+            finally: 
+                conn.close()
 
         elif menu_admin == "Subir Excel de Ventas":
             st.subheader("📉 Descuento Masivo")
@@ -577,14 +602,15 @@ elif rol == "Administrador":
                                         ok += 1
                             conn.commit()
                             st.success(f"✅ {ok} descontados.")
-                        finally: conn.close()
-                else: st.error("Faltan columnas.")
+                        finally: 
+                            conn.close()
+                else: 
+                    st.error("Faltan columnas.")
 
         elif menu_admin == "Reportes y Exportación":
             st.subheader("📊 Reportes y Compras")
             conn = get_connection()
             try:
-                # 🔴 MOTOR DE COMPRAS (SUGERENCIA AUTOMÁTICA)
                 df_compras = pd.read_sql_query("""
                     SELECT nombre_articulo as "Artículo", familia as "Familia", departamento as "Departamento",
                            existencia as "Stock_Actual", stock_minimo as "Mínimo", stock_maximo as "Máximo",
@@ -594,13 +620,16 @@ elif rol == "Administrador":
                     ORDER BY departamento ASC, nombre_articulo ASC
                 """, conn)
                 
-                df_inv = pd.read_sql_query("SELECT nombre_articulo, existencia, stock_minimo, stock_maximo FROM insumos ORDER BY nombre_articulo ASC", conn)
+                df_inv = pd.read_sql_query("SELECT nombre_articulo, existencia, stock_minimo, stock_maximo, COALESCE(cantidad_estandar, 0) as cantidad_estandar FROM insumos ORDER BY nombre_articulo ASC", conn)
                 df_sol = pd.read_sql_query("SELECT s.id_solicitud as Folio, s.fecha_hora as Fecha, s.area as Área, s.solicitante as Solicitante, s.estado as Estado, i.nombre_articulo as Artículo, d.cantidad_entregada as Entregado FROM solicitudes s JOIN detalle_solicitud d ON s.id_solicitud = d.id_solicitud JOIN insumos i ON d.id_insumo = i.id_insumo", conn)
                 df_ent = pd.read_sql_query("SELECT h.fecha_hora as Fecha, i.nombre_articulo as Artículo, h.cantidad_agregada as Cantidad, h.tipo_movimiento as Movimiento FROM historial_entradas h JOIN insumos i ON h.id_insumo = i.id_insumo", conn)
-            finally: conn.close()
+            finally: 
+                conn.close()
 
             def conv_df(df):
-                out = io.BytesIO(); df.to_excel(out, index=False); return out.getvalue()
+                out = io.BytesIO()
+                df.to_excel(out, index=False)
+                return out.getvalue()
                 
             st.info("💡 **Sistema de Compras Inteligente:** El sistema detecta qué productos bajaron de su stock mínimo y calcula cuántos debes pedir para llenar la bodega (Máximo).")
             if not df_compras.empty: 
@@ -623,15 +652,15 @@ elif rol == "Administrador":
                     c1, c2, c3 = st.columns(3)
                     n_nuevo = c1.text_input("Nombre del Producto", key="nn_art")
                     f_nuevo = c2.selectbox("Familia", ["PRODUCTOS", "SERVICIOS"], key="nf_art")
-                    d_nuevo = c3.selectbox("Depto", ["EXAMENES", "SERVICIOS", "MEDICAMENTO", "ALIMENTOS", "VACUNAS", "ROPA", "ACCESORIOS"])
+                    d_nuevo = c3.selectbox("Depto", ["EXAMENES", "SERVICIOS", "MEDICAMENTO", "ALIMENTOS", "VACUNAS", "ROPA", "ACCESORIOS"], key="nd_art")
                     comp_nuevo = st.text_input("Componentes", key="n_comp")
                     
                     c4, c5, c6 = st.columns(3)
-                    s_min_nuevo = c4.number_input("Stock Mínimo (Alerta)", min_value=0, value=2)
-                    s_max_nuevo = c5.number_input("Stock Máximo (Meta a llenar)", min_value=1, value=10)
-                    s_est_nuevo = c6.number_input("Entrega Estandarizada (0 = A petición)", min_value=0, value=0)
+                    s_min_nuevo = c4.number_input("Stock Mínimo (Alerta)", min_value=0, value=2, key="n_min_art")
+                    s_max_nuevo = c5.number_input("Stock Máximo (Meta a llenar)", min_value=1, value=10, key="n_max_art")
+                    s_est_nuevo = c6.number_input("Entrega Estandarizada (0 = A petición)", min_value=0, value=0, key="n_est_art")
                     
-                    if st.button("Guardar Nuevo Producto", type="primary"):
+                    if st.button("Guardar Nuevo Producto", type="primary", key="btn_guardar_nuevo"):
                         if n_nuevo:
                             conn = get_connection()
                             try:
@@ -642,15 +671,21 @@ elif rol == "Administrador":
                                           (n_nuevo.strip().upper(), f_nuevo, d_nuevo, comp_nuevo_clean, s_min_nuevo, s_max_nuevo, s_est_nuevo))
                                 conn.commit()
                                 st.success("Agregado exitosamente.")
-                                time.sleep(1); st.rerun()
-                            except IntegrityError: st.error("Ya existe un artículo con ese nombre.")
-                            finally: conn.close()
-                        else: st.error("El nombre es obligatorio.")
+                                time.sleep(1)
+                                st.rerun()
+                            except IntegrityError: 
+                                st.error("Ya existe un artículo con ese nombre.")
+                            finally: 
+                                conn.close()
+                        else: 
+                            st.error("El nombre es obligatorio.")
 
                 st.write("### 📋 Directorio de Productos")
                 conn = get_connection()
-                try: df_cat = pd.read_sql_query("SELECT * FROM insumos ORDER BY nombre_articulo", conn)
-                finally: conn.close()
+                try: 
+                    df_cat = pd.read_sql_query("SELECT * FROM insumos ORDER BY nombre_articulo", conn)
+                finally: 
+                    conn.close()
                 
                 if not df_cat.empty:
                     df_display = df_cat[['nombre_articulo', 'componentes', 'stock_minimo', 'stock_maximo']].copy()
@@ -665,7 +700,7 @@ elif rol == "Administrador":
                     df_cat['tiene_img'] = df_cat['imagen_b64'].apply(lambda x: 1 if pd.notna(x) and str(x).strip() != "" else 0)
                     df_cat_ordenado = df_cat.sort_values(by=['tiene_img', 'nombre_articulo'])
                     
-                    art_edit = st.selectbox("Selecciona un artículo para modificarlo (Los que faltan por foto aparecen primero):", df_cat_ordenado['nombre_articulo'].tolist())
+                    art_edit = st.selectbox("Selecciona un artículo para modificarlo (Los que faltan por foto aparecen primero):", df_cat_ordenado['nombre_articulo'].tolist(), key="sel_art_edit")
                     
                     if art_edit:
                         datos_art = df_cat_ordenado[df_cat_ordenado['nombre_articulo'] == art_edit].iloc[0]
@@ -676,36 +711,38 @@ elif rol == "Administrador":
                             st.session_state["file_uploader_key"] = int(time.time())
                         
                         col_e1, col_e2, col_e3 = st.columns(3)
-                        n_edit = col_e1.text_input("Nombre", value=datos_art['nombre_articulo'])
+                        n_edit = col_e1.text_input("Nombre", value=datos_art['nombre_articulo'], key="ed_nom_art")
                         fam_index = ["PRODUCTOS", "SERVICIOS"].index(datos_art['familia']) if datos_art['familia'] in ["PRODUCTOS", "SERVICIOS"] else 0
-                        f_edit = col_e2.selectbox("Familia", ["PRODUCTOS", "SERVICIOS"], index=fam_index)
+                        f_edit = col_e2.selectbox("Familia", ["PRODUCTOS", "SERVICIOS"], index=fam_index, key="ed_fam_art")
                         dept_opts = ["EXAMENES", "SERVICIOS", "MEDICAMENTO", "ALIMENTOS", "VACUNAS", "ROPA", "ACCESORIOS"]
                         dept_index = dept_opts.index(datos_art['departamento']) if datos_art['departamento'] in dept_opts else 2
-                        d_edit = col_e3.selectbox("Depto", dept_opts, index=dept_index)
+                        d_edit = col_e3.selectbox("Depto", dept_opts, index=dept_index, key="ed_dep_art")
                         
                         c_ia1, c_ia2 = st.columns([3, 1])
-                        c_edit = c_ia1.text_input("Componentes", value=st.session_state["edit_comp_val"])
+                        c_edit = c_ia1.text_input("Componentes", value=st.session_state["edit_comp_val"], key="ed_comp_art")
                         
                         st.write("") 
-                        if c_ia2.button("✨ Sugerir con IA"):
+                        if c_ia2.button("✨ Sugerir con IA", key="btn_ia_sug"):
                             res = obtener_componentes_ia(n_edit, API_KEY_GLOBAL)
                             if "ERROR" not in res:
                                 st.session_state["edit_comp_val"] = res.upper() 
                                 st.rerun()
-                            else: st.error(res)
+                            else: 
+                                st.error(res)
                         
                         col_e4, col_e5, col_e6 = st.columns(3)
-                        min_edit = col_e4.number_input("Stock Mín", min_value=0, value=int(datos_art['stock_minimo']))
-                        max_edit = col_e5.number_input("Stock Máx", min_value=1, value=int(datos_art['stock_maximo']))
+                        min_edit = col_e4.number_input("Stock Mín", min_value=0, value=int(datos_art['stock_minimo']), key="ed_min_art")
+                        max_edit = col_e5.number_input("Stock Máx", min_value=1, value=max(1, int(datos_art['stock_maximo'])), key="ed_max_art")
                         est_actual = int(datos_art['cantidad_estandar']) if pd.notna(datos_art.get('cantidad_estandar')) else 0
-                        est_edit = col_e6.number_input("Entrega Estandarizada (0 = A petición)", min_value=0, value=est_actual)
+                        est_edit = col_e6.number_input("Entrega Estandarizada (0 = A petición)", min_value=0, value=est_actual, key="ed_est_art")
                         
                         uploader_key = st.session_state.get("file_uploader_key", 0)
                         img_upload = st.file_uploader("Subir / Actualizar Imagen", type=["jpg", "png", "jpeg"], key=f"img_up_{uploader_key}")
                         
                         col_btn_e1, col_btn_e2 = st.columns(2)
-                        if col_btn_e1.button("✅ Guardar Cambios al Artículo", type="primary"):
-                            if n_edit.strip() == "": st.error("El nombre no puede estar vacío.")
+                        if col_btn_e1.button("✅ Guardar Cambios al Artículo", type="primary", key="btn_guardar_ed"):
+                            if n_edit.strip() == "": 
+                                st.error("El nombre no puede estar vacío.")
                             else:
                                 conn = get_connection()
                                 try:
@@ -724,11 +761,14 @@ elif rol == "Administrador":
                                     conn.commit()
                                     st.success("Artículo actualizado.")
                                     st.session_state["last_edit_art"] = None
-                                    time.sleep(1); st.rerun()
-                                except IntegrityError: st.error("Ese nombre ya está en uso.")
-                                finally: conn.close()
+                                    time.sleep(1)
+                                    st.rerun()
+                                except IntegrityError: 
+                                    st.error("Ese nombre ya está en uso.")
+                                finally: 
+                                    conn.close()
                                 
-                        if col_btn_e2.button("🗑️ Eliminar Artículo"):
+                        if col_btn_e2.button("🗑️ Eliminar Artículo", key="btn_elim_ed"):
                             conn = get_connection()
                             try:
                                 c = conn.cursor()
@@ -736,9 +776,12 @@ elif rol == "Administrador":
                                 conn.commit()
                                 st.success("Artículo eliminado.")
                                 st.session_state["last_edit_art"] = None
-                                time.sleep(1); st.rerun()
-                            except IntegrityError: st.error("⚠ No se puede eliminar: el artículo tiene historial.")
-                            finally: conn.close()
+                                time.sleep(1)
+                                st.rerun()
+                            except IntegrityError: 
+                                st.error("⚠ No se puede eliminar: el artículo tiene historial.")
+                            finally: 
+                                conn.close()
                 else:
                     st.info("No hay artículos en el catálogo.")
                     
@@ -788,7 +831,8 @@ elif rol == "Administrador":
                                 
                                 conn.commit()
                                 st.success(f"✅ ¡Éxito! Se subieron o actualizaron {count_ok} artículos en la base de datos.")
-                                if count_errores > 0: st.warning(f"Hubo {count_errores} filas que no se pudieron procesar.")
+                                if count_errores > 0: 
+                                    st.warning(f"Hubo {count_errores} filas que no se pudieron procesar.")
                             finally:
                                 conn.close()
                     else:
@@ -797,7 +841,6 @@ elif rol == "Administrador":
         elif menu_admin == "Gestión de Personal":
             st.subheader("👥 Gestión de Personal")
             
-            # 1. Agregar nuevo
             with st.form("form_agregar_personal", clear_on_submit=True):
                 st.write("**Agregar Nuevo Colaborador**")
                 n_pers = st.text_input("Nombre completo")
@@ -817,7 +860,6 @@ elif rol == "Administrador":
             
             st.divider()
             
-            # 2. Listar, Editar y Eliminar
             st.write("**Directorio de Personal**")
             conn = get_connection()
             try:
@@ -826,7 +868,6 @@ elif rol == "Administrador":
                 conn.close()
                 
             if not df_personal.empty:
-                # Mostramos la tabla actual
                 st.dataframe(df_personal, use_container_width=True, hide_index=True)
                 
                 st.write("---")
@@ -951,5 +992,9 @@ elif rol == "Administrador":
                 try:
                     c = conn.cursor()
                     c.execute("INSERT INTO configuracion (parametro, valor) VALUES (%s, %s) ON CONFLICT (parametro) DO UPDATE SET valor = EXCLUDED.valor", ('gemini_api_key', n_llave.strip()))
-                    conn.commit(); st.success("Guardado."); time.sleep(1); st.rerun()
-                finally: conn.close()
+                    conn.commit()
+                    st.success("Guardado.")
+                    time.sleep(1)
+                    st.rerun()
+                finally: 
+                    conn.close()
