@@ -317,8 +317,8 @@ if rol == "Personal":
                 st.write("---")
                 st.write(f"### 📋 Catálogo Visual ({len(df_filtrado)} productos)")
                 
-                # Mostrar resultados en cuadrícula de 3 columnas
-                cols_cat = st.columns(3)
+                # Mostrar resultados en cuadrícula de 2 columnas
+                cols_cat = st.columns(2)
                 for idx, (_, row) in enumerate(df_filtrado.iterrows()):
                     with cols_cat[idx % 3]:
                         mostrar_tarjeta_producto(row)
