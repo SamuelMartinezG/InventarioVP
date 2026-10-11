@@ -191,9 +191,13 @@ st.sidebar.title("Navegación")
 rol = st.sidebar.selectbox("Selecciona tu perfil:", ["Personal", "Administrador"])
 
 def mostrar_tarjeta_producto(datos_articulo):
-    # Regla visual inteligente: controla el tamaño en PC (160px) y lo agranda en Móvil (230px)
+    # Regla visual: suaviza el borde de la caja (0.08) y controla el tamaño de las fotos
     st.markdown("""
         <style>
+        div[data-testid="stVerticalBlockBorderWrapper"] {
+            border: 1px solid rgba(128, 128, 128, 0.08) !important;
+            border-radius: 10px !important;
+        }
         div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stImage"] img {
             max-width: 160px !important;
             max-height: 160px !important;
