@@ -139,14 +139,20 @@ def recomendar_productos_ia(consulta_medico, df_catalogo, api_key):
         
         lista_productos = []
         for _, row in df_catalogo.iterrows():
-            comp = row['componentes'] if pd.notna(row['componentes']) and str(row['componentes']).strip() not in ["", "N/A"] else "Desconocido (Usa tu conocimiento general)"
-            lista_productos.append(f"{row['nombre_articulo']}: {comp}")
+            comp = row['componentes'] if pd.notna(row['componentes']) and str(row['componentes']).strip() not in ["", "N/A"] else "Desconocido (Deduce su sustancia y uso por el nombre comercial)"
+            lista_productos.append(f"{row['nombre_articulo']} [Sustancia: {comp}]")
         
         catalogo_str = "\n".join(lista_productos)
-        prompt = f"""Eres el asistente médico de la clínica Vet Playas. Inventario disponible:
+        prompt = f"""Eres el asistente médico experto de la clínica Vet Playas. Inventario disponible:
 {catalogo_str}
+
 Consulta del médico: "{consulta_medico}"
-Regla estricta: Analiza la consulta y devuelve ÚNICAMENTE los nombres exactos de los productos que sirvan del inventario anterior, separados por el símbolo |. Si ningún producto sirve, responde "NINGUNO". Sin explicaciones ni saludos."""
+
+REGLAS DE CRITERIO CLÍNICO VETERINARIO:
+1. Analiza las sustancias activas y nombres comerciales con criterio práctico de consultorio veterinario, NO como un diccionario rígido.
+2. Incluye tanto los fármacos de acción primaria directa como aquellos cuya sustancia activa tenga acción secundaria, protectora, regeneradora, lubricante o coadyuvante para el problema o vía anatómica consultada (por ejemplo, en consultas de "antiinflamatorio ocular", incluye también protectores/regeneradores corneales como el Condroitín Sulfato o lágrimas oftálmicas que alivian la inflamación de superficie).
+3. Fíjate en la presentación del producto (GOTAS, OFTÁLMICO, TABLETA, SUSPENSIÓN) para asegurar que coincida con lo que busca el médico.
+4. Devuelve ÚNICAMENTE los nombres exactos de los productos del inventario anterior separados por el símbolo |. Si ningún producto tiene relación, responde "NINGUNO". Sin explicaciones ni saludos."""
         
         response = model.generate_content(prompt)
         nombres = response.text.strip().split('|')
