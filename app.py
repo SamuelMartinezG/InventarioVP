@@ -173,22 +173,13 @@ REGLAS DE CRITERIO CLÍNICO VETERINARIO:
         return [], error_str
 
 # ==========================================
-# VARIABLES DE SESIÓN Y CALLBACKS
+# VARIABLES DE SESIÓN
 # ==========================================
 if 'carrito' not in st.session_state: st.session_state.carrito = []
 if 'carrito_entradas' not in st.session_state: st.session_state.carrito_entradas = []
 if 'admin_auth' not in st.session_state: st.session_state.admin_auth = False
-
-def actualizar_componentes_desde_ia(articulo_nombre):
-    if not API_KEY_GLOBAL:
-        st.session_state.error_ia_edit = "Configura tu API Key."
-        return
-    resultado_ia = obtener_componentes_ia(articulo_nombre, API_KEY_GLOBAL)
-    if resultado_ia == "ERROR_CUOTA": st.session_state.error_ia_edit = "⏳ Límite alcanzado."
-    elif "ERROR:" in resultado_ia: st.session_state.error_ia_edit = f"❌ Gemini falló: {resultado_ia}"
-    else:
-        st.session_state.error_ia_edit = ""
-        st.session_state["input_edit_comp_val"] = resultado_ia
+if 'reset_sol_key' not in st.session_state: st.session_state.reset_sol_key = 0
+if 'reset_art_key' not in st.session_state: st.session_state.reset_art_key = 0
 
 try:
     with open("logo.png", "rb") as f:
@@ -199,8 +190,10 @@ except FileNotFoundError:
 st.sidebar.title("Navegación")
 rol = st.sidebar.selectbox("Selecciona tu perfil:", ["Personal", "Administrador"])
 
+# ==========================================
+# VISTAS COMPARTIDAS (PERSONAL Y ADMIN)
+# ==========================================
 def mostrar_tarjeta_producto(datos_articulo):
-    # Regla visual: suaviza el borde de la caja y controla el tamaño de las fotos
     st.markdown("""
         <style>
         div[data-testid="stVerticalBlockBorderWrapper"] {
@@ -250,79 +243,102 @@ def mostrar_tarjeta_producto(datos_articulo):
             else:
                 st.markdown(f"🔴 **Agotado:** 0 uds.")
 
-# ==========================================
-# MÓDULO: PERSONAL 
-# ==========================================
-if rol == "Personal":
-    menu_personal = st.sidebar.radio("Opciones", ["Solicitar Insumos", "Consultar Inventario"])
-    
-    if menu_personal == "Solicitar Insumos":
-        st.title("🏥 Registro de Insumos")
-        conn = get_connection()
-        try:
-            insumos_df = pd.read_sql_query("SELECT id_insumo, nombre_articulo, COALESCE(cantidad_estandar, 0) as cantidad_estandar FROM insumos ORDER BY nombre_articulo ASC", conn)
-            personal_df = pd.read_sql_query("SELECT nombre FROM personal ORDER BY nombre ASC", conn)
-            areas_df = pd.read_sql_query("SELECT nombre_area FROM areas ORDER BY nombre_area ASC", conn)
-        finally:
-            conn.close()
-            
-        if insumos_df.empty or personal_df.empty or areas_df.empty:
-            st.warning("⚠️ El administrador debe agregar áreas, personal y artículos al catálogo.")
-        else:
-            st.write("### 1. Datos de la Solicitud")
-            col1, col2 = st.columns(2)
-            area = col1.selectbox("Área", areas_df['nombre_area'].tolist())
-            solicitante = col2.selectbox("Nombre del Solicitante", personal_df['nombre'].tolist())
-            st.divider()
-            
-            st.write("### 2. Seleccionar Productos")
-            col_a, col_b, col_c = st.columns([3, 1.2, 1])
-            articulo_seleccionado = col_a.selectbox("Artículo", insumos_df['nombre_articulo'].tolist())
-            
-            # Revisamos si el artículo tiene cantidad estandarizada o es a petición
+def vista_solicitar_insumos():
+    st.title("🏥 Registro de Insumos")
+    conn = get_connection()
+    try:
+        insumos_df = pd.read_sql_query("SELECT id_insumo, nombre_articulo, COALESCE(cantidad_estandar, 0) as cantidad_estandar FROM insumos ORDER BY nombre_articulo ASC", conn)
+        personal_df = pd.read_sql_query("SELECT nombre FROM personal ORDER BY nombre ASC", conn)
+        areas_df = pd.read_sql_query("SELECT nombre_area FROM areas ORDER BY nombre_area ASC", conn)
+    finally:
+        conn.close()
+        
+    if insumos_df.empty or personal_df.empty or areas_df.empty:
+        st.warning("⚠️ El administrador debe agregar áreas, personal y artículos al catálogo.")
+    else:
+        st.write("### 1. Datos de la Solicitud")
+        col1, col2 = st.columns(2)
+        area = col1.selectbox(
+            "Área", 
+            areas_df['nombre_area'].tolist(), 
+            index=None, 
+            placeholder="Escribe para buscar el área...",
+            key=f"sel_area_{st.session_state.reset_sol_key}"
+        )
+        solicitante = col2.selectbox(
+            "Nombre del Solicitante", 
+            personal_df['nombre'].tolist(), 
+            index=None, 
+            placeholder="Escribe tu nombre...",
+            key=f"sel_sol_{st.session_state.reset_sol_key}"
+        )
+        st.divider()
+        
+        st.write("### 2. Seleccionar Productos")
+        col_a, col_b, col_c = st.columns([3, 1.2, 1])
+        articulo_seleccionado = col_a.selectbox(
+            "Artículo", 
+            insumos_df['nombre_articulo'].tolist(), 
+            index=None, 
+            placeholder="Escribe para buscar y filtrar un artículo...",
+            key=f"sel_art_{st.session_state.reset_art_key}"
+        )
+        
+        if articulo_seleccionado:
             fila_art = insumos_df[insumos_df['nombre_articulo'] == articulo_seleccionado].iloc[0]
             cant_estandar = int(fila_art['cantidad_estandar'])
             id_insumo_sel = int(fila_art['id_insumo'])
             
             if cant_estandar > 0:
-                cantidad = col_b.number_input("Cantidad (Fija)", value=cant_estandar, disabled=True, key=f"cant_fija_{id_insumo_sel}")
+                cantidad = col_b.number_input("Cantidad (Fija)", value=cant_estandar, disabled=True, key=f"cant_fija_{id_insumo_sel}_{st.session_state.reset_art_key}")
                 col_a.caption(f"🔒 **Entrega estandarizada:** Este artículo se entrega en bloques fijos de **{cant_estandar} uds.**")
             else:
-                cantidad = col_b.number_input("Cantidad (A petición)", min_value=1, value=1, step=1, key=f"cant_libre_{id_insumo_sel}")
+                cantidad = col_b.number_input("Cantidad (A petición)", min_value=1, value=1, step=1, key=f"cant_libre_{id_insumo_sel}_{st.session_state.reset_art_key}")
                 col_a.caption("✍️ **Cantidad libre:** Ingresa las unidades necesarias según tus pacientes.")
-                
-            col_c.write("")
-            if col_c.button("➕ Agregar", use_container_width=True):
+        else:
+            cantidad = col_b.number_input("Cantidad", min_value=1, value=1, disabled=True, key=f"cant_vacia_{st.session_state.reset_art_key}")
+            col_a.caption("👆 Escribe en el buscador para filtrar las opciones.")
+            
+        col_c.write("")
+        if col_c.button("➕ Agregar", use_container_width=True):
+            if not articulo_seleccionado:
+                st.warning("⚠️ Primero busca y selecciona un artículo.")
+            else:
                 st.session_state.carrito.append({
                     "id_insumo": id_insumo_sel, 
                     "nombre": articulo_seleccionado, 
                     "cantidad": cant_estandar if cant_estandar > 0 else cantidad,
                     "es_fijo": True if cant_estandar > 0 else False
                 })
-                st.success(f"{cant_estandar if cant_estandar > 0 else cantidad}x {articulo_seleccionado} agregado.")
-            
-            if len(st.session_state.carrito) > 0:
-                st.divider()
-                st.write("### 🛒 Resumen de tu Pedido")
-                for idx, item in enumerate(st.session_state.carrito):
-                    c1, c2, c3 = st.columns([4, 2, 1])
-                    etiqueta_tipo = "🔒 *(Estandarizado)*" if item.get('es_fijo', False) else "✍️ *(A petición)*"
-                    c1.write(f"{item['nombre']} {etiqueta_tipo}")
-                    
-                    if item.get('es_fijo', False):
-                        c2.number_input("Cantidad", value=item['cantidad'], disabled=True, key=f"ped_cant_{idx}", label_visibility="collapsed")
-                    else:
-                        nueva_cant = c2.number_input("Cantidad", min_value=1, value=item['cantidad'], step=1, key=f"ped_cant_{idx}", label_visibility="collapsed")
-                        if nueva_cant != item['cantidad']: 
-                            st.session_state.carrito[idx]['cantidad'] = nueva_cant
-                            
-                    if c3.button("🗑️", key=f"del_ped_{idx}"):
-                        st.session_state.carrito.pop(idx)
-                        st.rerun()
+                # Limpiamos el buscador de artículos para el siguiente producto
+                st.session_state.reset_art_key += 1
+                st.rerun()
+        
+        if len(st.session_state.carrito) > 0:
+            st.divider()
+            st.write("### 🛒 Resumen de tu Pedido")
+            for idx, item in enumerate(st.session_state.carrito):
+                c1, c2, c3 = st.columns([4, 2, 1])
+                etiqueta_tipo = "🔒 *(Estandarizado)*" if item.get('es_fijo', False) else "✍️ *(A petición)*"
+                c1.write(f"{item['nombre']} {etiqueta_tipo}")
+                
+                if item.get('es_fijo', False):
+                    c2.number_input("Cantidad", value=item['cantidad'], disabled=True, key=f"ped_cant_{idx}", label_visibility="collapsed")
+                else:
+                    nueva_cant = c2.number_input("Cantidad", min_value=1, value=item['cantidad'], step=1, key=f"ped_cant_{idx}", label_visibility="collapsed")
+                    if nueva_cant != item['cantidad']: 
+                        st.session_state.carrito[idx]['cantidad'] = nueva_cant
+                        
+                if c3.button("🗑️", key=f"del_ped_{idx}"):
+                    st.session_state.carrito.pop(idx)
+                    st.rerun()
 
-                st.write("---")
-                col_btn1, col_btn2 = st.columns([2, 2])
-                if col_btn1.button("✅ Enviar Solicitud Definitiva", type="primary"):
+            st.write("---")
+            col_btn1, col_btn2 = st.columns([2, 2])
+            if col_btn1.button("✅ Enviar Solicitud Definitiva", type="primary"):
+                if not area or not solicitante:
+                    st.error("⚠️ Por favor selecciona el Área y el Nombre del Solicitante en la parte superior.")
+                else:
                     conn = get_connection()
                     try:
                         c = conn.cursor()
@@ -335,87 +351,101 @@ if rol == "Personal":
                     finally:
                         conn.close()
                     st.session_state.carrito = []
-                    st.success("¡Solicitud enviada!")
-                    time.sleep(2) 
+                    st.session_state.reset_sol_key += 1
+                    st.session_state.reset_art_key += 1
+                    st.success("¡Solicitud enviada correctamente!")
+                    time.sleep(1.5) 
                     st.rerun() 
-                
-                if col_btn2.button("Vaciar Todo"):
-                    st.session_state.carrito = []
-                    st.rerun()
+            
+            if col_btn2.button("Vaciar Todo"):
+                st.session_state.carrito = []
+                st.session_state.reset_sol_key += 1
+                st.session_state.reset_art_key += 1
+                st.rerun()
 
-    elif menu_personal == "Consultar Inventario":
-        st.title("📦 Visor de Existencias")
-        conn = get_connection()
-        try: 
-            df_inv = pd.read_sql_query("SELECT * FROM insumos ORDER BY nombre_articulo ASC", conn)
-        finally: 
-            conn.close()
+def vista_consultar_inventario():
+    st.title("📦 Visor de Existencias")
+    conn = get_connection()
+    try: 
+        df_inv = pd.read_sql_query("SELECT * FROM insumos ORDER BY nombre_articulo ASC", conn)
+    finally: 
+        conn.close()
+        
+    if not df_inv.empty:
+        tab_b1, tab_b2 = st.tabs(["🔍 Búsqueda Normal", "🤖 Asistente Médico (IA)"])
+        
+        with tab_b1:
+            col_f1, col_f2 = st.columns([2, 1])
+            busqueda_texto = col_f1.text_input(
+                "🔍 Buscar producto o sustancia (Presiona Enter para filtrar):", 
+                placeholder="Ej: BRAVECTO, TRAMADOL, GOTAS..."
+            )
+            deptos_disponibles = ["TODOS"] + sorted(df_inv['departamento'].dropna().unique().tolist())
+            depto_filtro = col_f2.selectbox("Filtrar por Departamento:", deptos_disponibles)
             
-        if not df_inv.empty:
-            tab_b1, tab_b2 = st.tabs(["🔍 Búsqueda Normal", "🤖 Asistente Médico (IA)"])
+            df_filtrado = df_inv.copy()
+            if depto_filtro != "TODOS":
+                df_filtrado = df_filtrado[df_filtrado['departamento'] == depto_filtro]
             
-            with tab_b1:
-                col_f1, col_f2 = st.columns([2, 1])
-                busqueda_texto = col_f1.text_input(
-                    "🔍 Buscar producto o sustancia (Presiona Enter para filtrar):", 
-                    placeholder="Ej: BRAVECTO, TRAMADOL, GOTAS..."
-                )
-                deptos_disponibles = ["TODOS"] + sorted(df_inv['departamento'].dropna().unique().tolist())
-                depto_filtro = col_f2.selectbox("Filtrar por Departamento:", deptos_disponibles)
+            if busqueda_texto.strip() != "":
+                palabras = busqueda_texto.strip().upper().split()
+                texto_busqueda = (
+                    df_filtrado['nombre_articulo'].fillna('').astype(str) + " " + 
+                    df_filtrado['componentes'].fillna('').astype(str)
+                ).str.upper()
                 
-                df_filtrado = df_inv.copy()
-                if depto_filtro != "TODOS":
-                    df_filtrado = df_filtrado[df_filtrado['departamento'] == depto_filtro]
-                
-                # Filtro tipo Excel: busca cualquier coincidencia de palabras en Nombre o Componentes
-                if busqueda_texto.strip() != "":
-                    palabras = busqueda_texto.strip().upper().split()
-                    texto_busqueda = (
-                        df_filtrado['nombre_articulo'].fillna('').astype(str) + " " + 
-                        df_filtrado['componentes'].fillna('').astype(str)
-                    ).str.upper()
-                    
-                    for palabra in palabras:
-                        df_filtrado = df_filtrado[texto_busqueda.str.contains(palabra, na=False, regex=False)]
-                        texto_busqueda = texto_busqueda.loc[df_filtrado.index]
-                
-                st.write("---")
-                st.write(f"### 📋 Catálogo Visual ({len(df_filtrado)} productos encontrados)")
-                
-                if df_filtrado.empty:
-                    st.warning("No se encontraron productos que coincidan con tu búsqueda.")
+                for palabra in palabras:
+                    df_filtrado = df_filtrado[texto_busqueda.str.contains(palabra, na=False, regex=False)]
+                    texto_busqueda = texto_busqueda.loc[df_filtrado.index]
+            
+            st.write("---")
+            st.write(f"### 📋 Catálogo Visual ({len(df_filtrado)} productos encontrados)")
+            
+            if df_filtrado.empty:
+                st.warning("No se encontraron productos que coincidan con tu búsqueda.")
+            else:
+                cols_cat = st.columns(2)
+                for idx, (_, row) in enumerate(df_filtrado.iterrows()):
+                    with cols_cat[idx % 2]:
+                        mostrar_tarjeta_producto(row)
+            
+        with tab_b2:
+            consulta_medico = st.text_input("Consulta a la IA (Ej: 'Antiinflamatorio ocular')")
+            if st.button("Consultar ✨", type="primary"):
+                if not API_KEY_GLOBAL: 
+                    st.error("⚠ IA no configurada.")
+                elif not consulta_medico: 
+                    st.warning("Escribe tu consulta.")
                 else:
-                    cols_cat = st.columns(2)
-                    for idx, (_, row) in enumerate(df_filtrado.iterrows()):
-                        with cols_cat[idx % 2]:
-                            mostrar_tarjeta_producto(row)
-                
-            with tab_b2:
-                consulta_medico = st.text_input("Consulta a la IA (Ej: 'Antiinflamatorio ocular')")
-                if st.button("Consultar ✨", type="primary"):
-                    if not API_KEY_GLOBAL: 
-                        st.error("⚠ IA no configurada.")
-                    elif not consulta_medico: 
-                        st.warning("Escribe tu consulta.")
-                    else:
-                        with st.spinner("Analizando inventario..."):
-                            resultados_ia, error_ia = recomendar_productos_ia(consulta_medico, df_inv, API_KEY_GLOBAL)
-                            if error_ia: 
-                                st.error(f"❌ Error: {error_ia}")
-                            elif not resultados_ia or "NINGUNO" in [r.upper() for r in resultados_ia]: 
-                                st.warning("No se encontró ningún producto relacionado.")
-                            else:
-                                st.write("---")
-                                cols_ia = st.columns(2)
-                                col_idx = 0
-                                for nombre_sugerido in resultados_ia:
-                                    match = df_inv[df_inv['nombre_articulo'].str.upper() == nombre_sugerido.upper()]
-                                    if not match.empty:
-                                        with cols_ia[col_idx % 2]:
-                                            mostrar_tarjeta_producto(match.iloc[0])
-                                        col_idx += 1
-        else: 
-            st.info("Catálogo vacío.")
+                    with st.spinner("Analizando inventario..."):
+                        resultados_ia, error_ia = recomendar_productos_ia(consulta_medico, df_inv, API_KEY_GLOBAL)
+                        if error_ia: 
+                            st.error(f"❌ Error: {error_ia}")
+                        elif not resultados_ia or "NINGUNO" in [r.upper() for r in resultados_ia]: 
+                            st.warning("No se encontró ningún producto relacionado.")
+                        else:
+                            st.write("---")
+                            cols_ia = st.columns(2)
+                            col_idx = 0
+                            for nombre_sugerido in resultados_ia:
+                                match = df_inv[df_inv['nombre_articulo'].str.upper() == nombre_sugerido.upper()]
+                                if not match.empty:
+                                    with cols_ia[col_idx % 2]:
+                                        mostrar_tarjeta_producto(match.iloc[0])
+                                    col_idx += 1
+    else: 
+        st.info("Catálogo vacío.")
+
+# ==========================================
+# MÓDULO: PERSONAL 
+# ==========================================
+if rol == "Personal":
+    menu_personal = st.sidebar.radio("Opciones", ["Solicitar Insumos", "Consultar Inventario"])
+    
+    if menu_personal == "Solicitar Insumos":
+        vista_solicitar_insumos()
+    elif menu_personal == "Consultar Inventario":
+        vista_consultar_inventario()
 
 # ==========================================
 # MÓDULO: ADMINISTRADOR
@@ -441,7 +471,19 @@ elif rol == "Administrador":
             st.rerun()
             
         st.title("⚙ Panel de Administración")
-        menu_admin = st.sidebar.radio("Opciones", ["Surtir Solicitudes", "Entradas / Compras", "Subir Excel de Ventas", "Reportes y Exportación", "Catálogo de Insumos", "Gestión de Personal", "Gestión de Áreas", "Configuración IA"])        
+        menu_admin = st.sidebar.radio(
+            "Opciones", 
+            [
+                "Surtir Solicitudes", 
+                "Solicitar Insumos", 
+                "Consultar Inventario", 
+                "Entradas / Compras", 
+                "Catálogo de Insumos", 
+                "Ventas y Reportes", 
+                "Personal y Áreas", 
+                "Configuración IA"
+            ]
+        )
         
         if menu_admin == "Surtir Solicitudes":
             st.subheader("📦 Solicitudes Pendientes")
@@ -497,6 +539,12 @@ elif rol == "Administrador":
             finally: 
                 conn.close()
 
+        elif menu_admin == "Solicitar Insumos":
+            vista_solicitar_insumos()
+
+        elif menu_admin == "Consultar Inventario":
+            vista_consultar_inventario()
+
         elif menu_admin == "Entradas / Compras":
             st.subheader("📥 Registrar Ingreso")
             tab1, tab2 = st.tabs(["📦 Existente", "🆕 Nuevo"])
@@ -505,7 +553,7 @@ elif rol == "Administrador":
                 insumos_df = pd.read_sql_query("SELECT id_insumo, nombre_articulo FROM insumos ORDER BY nombre_articulo ASC", conn)
                 with tab1:
                     with st.form("form_existente", clear_on_submit=True):
-                        articulo = st.selectbox("Artículo", insumos_df['nombre_articulo'].tolist() if not insumos_df.empty else [])
+                        articulo = st.selectbox("Artículo", insumos_df['nombre_articulo'].tolist() if not insumos_df.empty else [], index=None, placeholder="Escribe para buscar...")
                         col1, col2 = st.columns(2)
                         cajas = col1.number_input("Cajas", min_value=1, value=1)
                         pzas = col2.number_input("Piezas x Caja", min_value=1, value=1)
@@ -577,71 +625,6 @@ elif rol == "Administrador":
                         st.rerun()
             finally: 
                 conn.close()
-
-        elif menu_admin == "Subir Excel de Ventas":
-            st.subheader("📉 Descuento Masivo")
-            arch = st.file_uploader("Reporte", type=["xls", "xlsx"])
-            if arch:
-                df_v = pd.read_excel(arch)
-                df_v.columns = [str(c).strip().upper() for c in df_v.columns]
-                if 'PRODUCTO' in df_v.columns and 'VOLUMEN' in df_v.columns:
-                    if st.button("Aplicar Descuentos", type="primary"):
-                        conn = get_connection()
-                        try:
-                            c = conn.cursor()
-                            ok = 0
-                            for _, row in df_v.iterrows():
-                                p = str(row['PRODUCTO']).strip().upper()
-                                try: v = int(float(row['VOLUMEN']))
-                                except: v = 0
-                                if pd.notna(p) and v > 0 and p != "NAN":
-                                    c.execute("SELECT id_insumo FROM insumos WHERE nombre_articulo = %s", (p,))
-                                    res = c.fetchone()
-                                    if res:
-                                        c.execute("UPDATE insumos SET existencia = existencia - %s WHERE id_insumo = %s", (v, res[0]))
-                                        ok += 1
-                            conn.commit()
-                            st.success(f"✅ {ok} descontados.")
-                        finally: 
-                            conn.close()
-                else: 
-                    st.error("Faltan columnas.")
-
-        elif menu_admin == "Reportes y Exportación":
-            st.subheader("📊 Reportes y Compras")
-            conn = get_connection()
-            try:
-                df_compras = pd.read_sql_query("""
-                    SELECT nombre_articulo as "Artículo", familia as "Familia", departamento as "Departamento",
-                           existencia as "Stock_Actual", stock_minimo as "Mínimo", stock_maximo as "Máximo",
-                           (stock_maximo - existencia) as "Cantidad_A_Pedir"
-                    FROM insumos 
-                    WHERE existencia <= stock_minimo
-                    ORDER BY departamento ASC, nombre_articulo ASC
-                """, conn)
-                
-                df_inv = pd.read_sql_query("SELECT nombre_articulo, existencia, stock_minimo, stock_maximo, COALESCE(cantidad_estandar, 0) as cantidad_estandar FROM insumos ORDER BY nombre_articulo ASC", conn)
-                df_sol = pd.read_sql_query("SELECT s.id_solicitud as Folio, s.fecha_hora as Fecha, s.area as Área, s.solicitante as Solicitante, s.estado as Estado, i.nombre_articulo as Artículo, d.cantidad_entregada as Entregado FROM solicitudes s JOIN detalle_solicitud d ON s.id_solicitud = d.id_solicitud JOIN insumos i ON d.id_insumo = i.id_insumo", conn)
-                df_ent = pd.read_sql_query("SELECT h.fecha_hora as Fecha, i.nombre_articulo as Artículo, h.cantidad_agregada as Cantidad, h.tipo_movimiento as Movimiento FROM historial_entradas h JOIN insumos i ON h.id_insumo = i.id_insumo", conn)
-            finally: 
-                conn.close()
-
-            def conv_df(df):
-                out = io.BytesIO()
-                df.to_excel(out, index=False)
-                return out.getvalue()
-                
-            st.info("💡 **Sistema de Compras Inteligente:** El sistema detecta qué productos bajaron de su stock mínimo y calcula cuántos debes pedir para llenar la bodega (Máximo).")
-            if not df_compras.empty: 
-                st.download_button("🛒 Descargar Solicitud de Compras (Excel)", data=conv_df(df_compras), file_name=f"Pedido_{datetime.now().strftime('%Y%m%d')}.xlsx", type="primary")
-            else:
-                st.success("¡Tu bodega está perfecta! Ningún producto ha bajado de su nivel de alerta.")
-
-            st.write("---")
-            c1, c2, c3 = st.columns(3)
-            if not df_inv.empty: c1.download_button("📥 Inventario Total", data=conv_df(df_inv), file_name="Inventario.xlsx")
-            if not df_sol.empty: c2.download_button("📥 Salidas", data=conv_df(df_sol), file_name="Salidas.xlsx")
-            if not df_ent.empty: c3.download_button("📥 Entradas", data=conv_df(df_ent), file_name="Entradas.xlsx")
 
         elif menu_admin == "Catálogo de Insumos":
             st.subheader("Catálogo de Insumos")
@@ -837,153 +820,220 @@ elif rol == "Administrador":
                                 conn.close()
                     else:
                         st.error("❌ El archivo no tiene la columna 'PRODUCTO'. Revisa el encabezado de tu Excel.")
-                        
-        elif menu_admin == "Gestión de Personal":
-            st.subheader("👥 Gestión de Personal")
-            
-            with st.form("form_agregar_personal", clear_on_submit=True):
-                st.write("**Agregar Nuevo Colaborador**")
-                n_pers = st.text_input("Nombre completo")
-                if st.form_submit_button("Guardar Nombre") and n_pers:
-                    conn = get_connection()
-                    try:
-                        c = conn.cursor()
-                        c.execute("INSERT INTO personal (nombre) VALUES (%s)", (n_pers.strip().upper(),))
-                        conn.commit()
-                        st.success("Registrado.")
-                        time.sleep(1)
-                        st.rerun()
-                    except IntegrityError: 
-                        st.error("Ya existe en la base de datos.")
-                    finally: 
-                        conn.close()
-            
-            st.divider()
-            
-            st.write("**Directorio de Personal**")
-            conn = get_connection()
-            try:
-                df_personal = pd.read_sql_query("SELECT id_personal, nombre FROM personal ORDER BY nombre ASC", conn)
-            finally:
-                conn.close()
-                
-            if not df_personal.empty:
-                st.dataframe(df_personal, use_container_width=True, hide_index=True)
-                
-                st.write("---")
-                st.write("**Editar o Eliminar Personal**")
-                persona_seleccionada = st.selectbox("Selecciona a la persona a modificar:", df_personal['nombre'].tolist())
-                
-                if persona_seleccionada:
-                    id_persona = int(df_personal[df_personal['nombre'] == persona_seleccionada].iloc[0]['id_personal'])
-                    
-                    col_ed1, col_ed2 = st.columns([3, 1])
-                    nuevo_nombre = col_ed1.text_input("Modificar nombre:", value=persona_seleccionada)
-                    
-                    col_btn1, col_btn2 = st.columns(2)
-                    if col_btn1.button("Actualizar Nombre", type="primary"):
-                        if nuevo_nombre.strip() == "":
-                            st.error("El nombre no puede estar vacío.")
-                        else:
-                            conn = get_connection()
-                            try:
-                                c = conn.cursor()
-                                c.execute("UPDATE personal SET nombre = %s WHERE id_personal = %s", (nuevo_nombre.strip().upper(), id_persona))
-                                conn.commit()
-                                st.success("Nombre actualizado.")
-                                time.sleep(1)
-                                st.rerun()
-                            except IntegrityError:
-                                st.error("Ese nombre ya existe.")
-                            finally:
-                                conn.close()
-                                
-                    if col_btn2.button("🗑️ Eliminar Persona"):
-                        conn = get_connection()
-                        try:
-                            c = conn.cursor()
-                            c.execute("DELETE FROM personal WHERE id_personal = %s", (id_persona,))
-                            conn.commit()
-                            st.success("Persona eliminada del sistema.")
-                            time.sleep(1)
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Error al eliminar: {e}")
-                        finally:
-                            conn.close()
-            else:
-                st.info("No hay personal registrado aún.")
 
-        elif menu_admin == "Gestión de Áreas":
-            st.subheader("🏥 Gestión de Áreas del Hospital")
+        elif menu_admin == "Ventas y Reportes":
+            st.subheader("📊 Ventas y Reportes")
+            tab_rep, tab_ven = st.tabs(["📊 Reportes y Exportación", "📉 Subir Excel de Ventas"])
             
-            with st.form("form_agregar_area", clear_on_submit=True):
-                st.write("**Agregar Nueva Área**")
-                n_area = st.text_input("Nombre del Área (Ej: QUIRÓFANO, ESTÉTICA, LABORATORIO)")
-                if st.form_submit_button("Guardar Área") and n_area:
-                    conn = get_connection()
-                    try:
-                        c = conn.cursor()
-                        c.execute("INSERT INTO areas (nombre_area) VALUES (%s)", (n_area.strip().upper(),))
-                        conn.commit()
-                        st.success("Área registrada.")
-                        time.sleep(1)
-                        st.rerun()
-                    except IntegrityError:
-                        st.error("Esa área ya existe.")
-                    finally:
-                        conn.close()
-            
-            st.divider()
-            st.write("**Directorio de Áreas Activas**")
-            conn = get_connection()
-            try:
-                df_areas = pd.read_sql_query("SELECT id_area, nombre_area FROM areas ORDER BY nombre_area ASC", conn)
-            finally:
-                conn.close()
-                
-            if not df_areas.empty:
-                st.dataframe(df_areas, use_container_width=True, hide_index=True)
-                
-                st.write("---")
-                st.write("**Editar o Eliminar Área**")
-                area_sel = st.selectbox("Selecciona el área a modificar:", df_areas['nombre_area'].tolist())
-                
-                if area_sel:
-                    id_area_sel = int(df_areas[df_areas['nombre_area'] == area_sel].iloc[0]['id_area'])
-                    nuevo_nom_area = st.text_input("Modificar nombre del área:", value=area_sel)
+            with tab_rep:
+                conn = get_connection()
+                try:
+                    df_compras = pd.read_sql_query("""
+                        SELECT nombre_articulo as "Artículo", familia as "Familia", departamento as "Departamento",
+                               existencia as "Stock_Actual", stock_minimo as "Mínimo", stock_maximo as "Máximo",
+                               (stock_maximo - existencia) as "Cantidad_A_Pedir"
+                        FROM insumos 
+                        WHERE existencia <= stock_minimo
+                        ORDER BY departamento ASC, nombre_articulo ASC
+                    """, conn)
                     
-                    col_ba1, col_ba2 = st.columns(2)
-                    if col_ba1.button("Actualizar Área", type="primary"):
-                        if nuevo_nom_area.strip() == "":
-                            st.error("El nombre no puede estar vacío.")
-                        else:
+                    df_inv = pd.read_sql_query("SELECT nombre_articulo, existencia, stock_minimo, stock_maximo, COALESCE(cantidad_estandar, 0) as cantidad_estandar FROM insumos ORDER BY nombre_articulo ASC", conn)
+                    df_sol = pd.read_sql_query("SELECT s.id_solicitud as Folio, s.fecha_hora as Fecha, s.area as Área, s.solicitante as Solicitante, s.estado as Estado, i.nombre_articulo as Artículo, d.cantidad_entregada as Entregado FROM solicitudes s JOIN detalle_solicitud d ON s.id_solicitud = d.id_solicitud JOIN insumos i ON d.id_insumo = i.id_insumo", conn)
+                    df_ent = pd.read_sql_query("SELECT h.fecha_hora as Fecha, i.nombre_articulo as Artículo, h.cantidad_agregada as Cantidad, h.tipo_movimiento as Movimiento FROM historial_entradas h JOIN insumos i ON h.id_insumo = i.id_insumo", conn)
+                finally: 
+                    conn.close()
+
+                def conv_df(df):
+                    out = io.BytesIO()
+                    df.to_excel(out, index=False)
+                    return out.getvalue()
+                    
+                st.info("💡 **Sistema de Compras Inteligente:** El sistema detecta qué productos bajaron de su stock mínimo y calcula cuántos debes pedir para llenar la bodega (Máximo).")
+                if not df_compras.empty: 
+                    st.download_button("🛒 Descargar Solicitud de Compras (Excel)", data=conv_df(df_compras), file_name=f"Pedido_{datetime.now().strftime('%Y%m%d')}.xlsx", type="primary")
+                else:
+                    st.success("¡Tu bodega está perfecta! Ningún producto ha bajado de su nivel de alerta.")
+
+                st.write("---")
+                c1, c2, c3 = st.columns(3)
+                if not df_inv.empty: c1.download_button("📥 Inventario Total", data=conv_df(df_inv), file_name="Inventario.xlsx")
+                if not df_sol.empty: c2.download_button("📥 Salidas", data=conv_df(df_sol), file_name="Salidas.xlsx")
+                if not df_ent.empty: c3.download_button("📥 Entradas", data=conv_df(df_ent), file_name="Entradas.xlsx")
+
+            with tab_ven:
+                st.write("**Descuento Masivo por Ventas**")
+                arch = st.file_uploader("Sube tu reporte de ventas", type=["xls", "xlsx"], key="up_ventas_excel")
+                if arch:
+                    df_v = pd.read_excel(arch)
+                    df_v.columns = [str(c).strip().upper() for c in df_v.columns]
+                    if 'PRODUCTO' in df_v.columns and 'VOLUMEN' in df_v.columns:
+                        if st.button("Aplicar Descuentos", type="primary", key="btn_desc_ventas"):
                             conn = get_connection()
                             try:
                                 c = conn.cursor()
-                                c.execute("UPDATE areas SET nombre_area = %s WHERE id_area = %s", (nuevo_nom_area.strip().upper(), id_area_sel))
+                                ok = 0
+                                for _, row in df_v.iterrows():
+                                    p = str(row['PRODUCTO']).strip().upper()
+                                    try: v = int(float(row['VOLUMEN']))
+                                    except: v = 0
+                                    if pd.notna(p) and v > 0 and p != "NAN":
+                                        c.execute("SELECT id_insumo FROM insumos WHERE nombre_articulo = %s", (p,))
+                                        res = c.fetchone()
+                                        if res:
+                                            c.execute("UPDATE insumos SET existencia = existencia - %s WHERE id_insumo = %s", (v, res[0]))
+                                            ok += 1
                                 conn.commit()
-                                st.success("Área actualizada.")
-                                time.sleep(1)
-                                st.rerun()
-                            except IntegrityError:
-                                st.error("Ese nombre de área ya existe.")
-                            finally:
+                                st.success(f"✅ {ok} artículos descontados del inventario.")
+                            finally: 
                                 conn.close()
-                                
-                    if col_ba2.button("🗑️ Eliminar Área"):
+                    else: 
+                        st.error("❌ Faltan las columnas PRODUCTO y VOLUMEN en el archivo.")
+
+        elif menu_admin == "Personal y Áreas":
+            st.subheader("👥 Gestión de Personal y Áreas")
+            tab_pers, tab_areas = st.tabs(["👥 Gestión de Personal", "🏥 Gestión de Áreas"])
+            
+            with tab_pers:
+                with st.form("form_agregar_personal", clear_on_submit=True):
+                    st.write("**Agregar Nuevo Colaborador**")
+                    n_pers = st.text_input("Nombre completo")
+                    if st.form_submit_button("Guardar Nombre") and n_pers:
                         conn = get_connection()
                         try:
                             c = conn.cursor()
-                            c.execute("DELETE FROM areas WHERE id_area = %s", (id_area_sel,))
+                            c.execute("INSERT INTO personal (nombre) VALUES (%s)", (n_pers.strip().upper(),))
                             conn.commit()
-                            st.success("Área eliminada.")
+                            st.success("Registrado.")
                             time.sleep(1)
                             st.rerun()
+                        except IntegrityError: 
+                            st.error("Ya existe en la base de datos.")
+                        finally: 
+                            conn.close()
+                
+                st.divider()
+                st.write("**Directorio de Personal**")
+                conn = get_connection()
+                try:
+                    df_personal = pd.read_sql_query("SELECT id_personal, nombre FROM personal ORDER BY nombre ASC", conn)
+                finally:
+                    conn.close()
+                    
+                if not df_personal.empty:
+                    st.dataframe(df_personal, use_container_width=True, hide_index=True)
+                    
+                    st.write("---")
+                    st.write("**Editar o Eliminar Personal**")
+                    persona_seleccionada = st.selectbox("Selecciona a la persona a modificar:", df_personal['nombre'].tolist(), key="sel_pers_mod")
+                    
+                    if persona_seleccionada:
+                        id_persona = int(df_personal[df_personal['nombre'] == persona_seleccionada].iloc[0]['id_personal'])
+                        
+                        col_ed1, col_ed2 = st.columns([3, 1])
+                        nuevo_nombre = col_ed1.text_input("Modificar nombre:", value=persona_seleccionada, key="in_pers_mod")
+                        
+                        col_btn1, col_btn2 = st.columns(2)
+                        if col_btn1.button("Actualizar Nombre", type="primary", key="btn_act_pers"):
+                            if nuevo_nombre.strip() == "":
+                                st.error("El nombre no puede estar vacío.")
+                            else:
+                                conn = get_connection()
+                                try:
+                                    c = conn.cursor()
+                                    c.execute("UPDATE personal SET nombre = %s WHERE id_personal = %s", (nuevo_nombre.strip().upper(), id_persona))
+                                    conn.commit()
+                                    st.success("Nombre actualizado.")
+                                    time.sleep(1)
+                                    st.rerun()
+                                except IntegrityError:
+                                    st.error("Ese nombre ya existe.")
+                                finally:
+                                    conn.close()
+                                    
+                        if col_btn2.button("🗑️ Eliminar Persona", key="btn_del_pers"):
+                            conn = get_connection()
+                            try:
+                                c = conn.cursor()
+                                c.execute("DELETE FROM personal WHERE id_personal = %s", (id_persona,))
+                                conn.commit()
+                                st.success("Persona eliminada del sistema.")
+                                time.sleep(1)
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error al eliminar: {e}")
+                            finally:
+                                conn.close()
+                else:
+                    st.info("No hay personal registrado aún.")
+
+            with tab_areas:
+                with st.form("form_agregar_area", clear_on_submit=True):
+                    st.write("**Agregar Nueva Área**")
+                    n_area = st.text_input("Nombre del Área (Ej: QUIRÓFANO, ESTÉTICA, LABORATORIO)")
+                    if st.form_submit_button("Guardar Área") and n_area:
+                        conn = get_connection()
+                        try:
+                            c = conn.cursor()
+                            c.execute("INSERT INTO areas (nombre_area) VALUES (%s)", (n_area.strip().upper(),))
+                            conn.commit()
+                            st.success("Área registrada.")
+                            time.sleep(1)
+                            st.rerun()
+                        except IntegrityError:
+                            st.error("Esa área ya existe.")
                         finally:
                             conn.close()
-            else:
-                st.info("No hay áreas registradas.")
+                
+                st.divider()
+                st.write("**Directorio de Áreas Activas**")
+                conn = get_connection()
+                try:
+                    df_areas = pd.read_sql_query("SELECT id_area, nombre_area FROM areas ORDER BY nombre_area ASC", conn)
+                finally:
+                    conn.close()
+                    
+                if not df_areas.empty:
+                    st.dataframe(df_areas, use_container_width=True, hide_index=True)
+                    
+                    st.write("---")
+                    st.write("**Editar o Eliminar Área**")
+                    area_sel = st.selectbox("Selecciona el área a modificar:", df_areas['nombre_area'].tolist(), key="sel_area_mod")
+                    
+                    if area_sel:
+                        id_area_sel = int(df_areas[df_areas['nombre_area'] == area_sel].iloc[0]['id_area'])
+                        nuevo_nom_area = st.text_input("Modificar nombre del área:", value=area_sel, key="in_area_mod")
+                        
+                        col_ba1, col_ba2 = st.columns(2)
+                        if col_ba1.button("Actualizar Área", type="primary", key="btn_act_area"):
+                            if nuevo_nom_area.strip() == "":
+                                st.error("El nombre no puede estar vacío.")
+                            else:
+                                conn = get_connection()
+                                try:
+                                    c = conn.cursor()
+                                    c.execute("UPDATE areas SET nombre_area = %s WHERE id_area = %s", (nuevo_nom_area.strip().upper(), id_area_sel))
+                                    conn.commit()
+                                    st.success("Área actualizada.")
+                                    time.sleep(1)
+                                    st.rerun()
+                                except IntegrityError:
+                                    st.error("Ese nombre de área ya existe.")
+                                finally:
+                                    conn.close()
+                                    
+                        if col_ba2.button("🗑️ Eliminar Área", key="btn_del_area"):
+                            conn = get_connection()
+                            try:
+                                c = conn.cursor()
+                                c.execute("DELETE FROM areas WHERE id_area = %s", (id_area_sel,))
+                                conn.commit()
+                                st.success("Área eliminada.")
+                                time.sleep(1)
+                                st.rerun()
+                            finally:
+                                conn.close()
+                else:
+                    st.info("No hay áreas registradas.")
             
         elif menu_admin == "Configuración IA":
             n_llave = st.text_input("API Key:", value=API_KEY_GLOBAL, type="password")
