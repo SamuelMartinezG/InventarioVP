@@ -547,49 +547,168 @@ elif rol == "Administrador":
 
         elif menu_admin == "Entradas / Compras":
             st.subheader("📥 Registrar Ingreso")
-            tab1, tab2 = st.tabs(["📦 Existente", "🆕 Nuevo"])
+            ent_key = st.session_state.get("reset_ent_key", 0)
+            
             conn = get_connection()
             try:
-                insumos_df = pd.read_sql_query("SELECT id_insumo, nombre_articulo FROM insumos ORDER BY nombre_articulo ASC", conn)
-                with tab1:
-                    with st.form("form_existente", clear_on_submit=True):
-                        articulo = st.selectbox("Artículo", insumos_df['nombre_articulo'].tolist() if not insumos_df.empty else [], index=None, placeholder="Escribe para buscar...")
+                insumos_df = pd.read_sql_query("SELECT * FROM insumos ORDER BY nombre_articulo ASC", conn)
+                
+                with st.container(border=True):
+                    opciones_art = ["➕ REGISTRAR PRODUCTO NUEVO..."] + (insumos_df['nombre_articulo'].tolist() if not insumos_df.empty else [])
+                    
+                    # Buscador inteligente: filtra existentes o permite escribir uno nuevo directamente
+                    try:
+                        seleccion_art = st.selectbox(
+                            "🔍 Artículo (escribe para buscar en el catálogo o escribe un nombre nuevo y presiona Enter):",
+                            opciones_art,
+                            index=None,
+                            placeholder="Escribe el nombre o presentación del producto...",
+                            accept_new_options=True,
+                            key=f"ent_sel_art_{ent_key}"
+                        )
+                    except TypeError:
+                        seleccion_art = st.selectbox(
+                            "🔍 Artículo (escribe para buscar o selecciona '➕ REGISTRAR PRODUCTO NUEVO...'):",
+                            opciones_art,
+                            index=None,
+                            placeholder="Escribe el nombre o presentación del producto...",
+                            key=f"ent_sel_art_{ent_key}"
+                        )
+                    
+                    es_existente = False
+                    es_nuevo = False
+                    
+                    if seleccion_art:
+                        if not insumos_df.empty and seleccion_art in insumos_df['nombre_articulo'].values:
+                            es_existente = True
+                        else:
+                            es_nuevo = True
+                    
+                    # ==========================================
+                    # CASO 1: EL PRODUCTO YA EXISTE (AUTO-CARGA)
+                    # ==========================================
+                    if es_existente:
+                        datos_prod = insumos_df[insumos_df['nombre_articulo'] == seleccion_art].iloc[0]
+                        id_ins = int(datos_prod['id_insumo'])
+                        
+                        st.markdown("---")
+                        col_img_p, col_inf_p = st.columns([1, 4])
+                        with col_img_p:
+                            img_b64 = datos_prod.get('imagen_b64', None)
+                            if pd.notna(img_b64) and str(img_b64).strip() != "":
+                                try:
+                                    st.image(base64.b64decode(img_b64), width=110)
+                                except Exception:
+                                    st.caption("📷 Error de imagen")
+                            else:
+                                st.caption("🚫 Sin imagen en catálogo")
+                                
+                        with col_inf_p:
+                            st.markdown(f"✅ **Producto en catálogo:** `{datos_prod['nombre_articulo']}`")
+                            comp_txt = datos_prod['componentes'] if pd.notna(datos_prod['componentes']) and str(datos_prod['componentes']).strip() != "" else "Sin componentes registrados"
+                            st.caption(f"🧬 **Componentes:** {comp_txt}")
+                            est_val = int(datos_prod['cantidad_estandar']) if pd.notna(datos_prod.get('cantidad_estandar')) else 0
+                            est_txt = f"🔒 {est_val} uds" if est_val > 0 else "✍️ A petición"
+                            st.caption(f"📁 **Familia:** {datos_prod['familia']} | **Depto:** {datos_prod['departamento']} | **Entrega Hospital:** {est_txt}")
+                            st.markdown(f"📦 **Existencia actual:** `{int(datos_prod['existencia'])} uds` *(Mín: {int(datos_prod['stock_minimo'])} | Máx: {int(datos_prod['stock_maximo'])})*")
+                        
+                        st.markdown("---")
                         col1, col2 = st.columns(2)
-                        cajas = col1.number_input("Cajas", min_value=1, value=1)
-                        pzas = col2.number_input("Piezas x Caja", min_value=1, value=1)
-                        if st.form_submit_button("➕ Agregar") and articulo:
-                            id_ins = int(insumos_df.loc[insumos_df['nombre_articulo'] == articulo, 'id_insumo'].values[0])
-                            st.session_state.carrito_entradas.append({"id_insumo": id_ins, "nombre": articulo, "cajas": cajas, "piezas_caja": pzas, "total": cajas * pzas})
+                        cajas = col1.number_input("Cajas", min_value=1, value=1, key=f"cajas_ex_{ent_key}")
+                        pzas = col2.number_input("Piezas x Caja", min_value=1, value=1, key=f"pzas_ex_{ent_key}")
+                        
+                        if st.button("➕ Agregar al Ingreso", type="primary", key=f"btn_add_ex_{ent_key}"):
+                            st.session_state.carrito_entradas.append({
+                                "id_insumo": id_ins, 
+                                "nombre": datos_prod['nombre_articulo'], 
+                                "cajas": cajas, 
+                                "piezas_caja": pzas, 
+                                "total": cajas * pzas
+                            })
+                            st.session_state["reset_ent_key"] = ent_key + 1
                             st.rerun()
-                with tab2:
-                    with st.form("form_nuevo", clear_on_submit=True):
-                        col_n1, col_n2, col_n3 = st.columns(3)
-                        n_nuevo = col_n1.text_input("Nombre")
-                        f_nueva = col_n2.selectbox("Familia", ["PRODUCTOS", "SERVICIOS"])
-                        d_nuevo = col_n3.selectbox("Depto", ["EXAMENES", "SERVICIOS", "MEDICAMENTO", "ALIMENTOS", "VACUNAS", "ROPA", "ACCESORIOS"])
-                        comp_nuevo = st.text_input("Componentes")
-                        
-                        col_m1, col_m2 = st.columns(2)
-                        s_min = col_m1.number_input("Stock Mínimo", min_value=0, value=2)
-                        s_max = col_m2.number_input("Stock Máximo", min_value=1, value=10)
-                        
-                        col_c1, col_c2 = st.columns(2)
-                        c_n = col_c1.number_input("Cajas", min_value=1, value=1)
-                        p_n = col_c2.number_input("Pzas x Caja", min_value=1, value=1)
-                        if st.form_submit_button("Crear y Agregar") and n_nuevo:
-                            try:
-                                c = conn.cursor()
-                                comp_clean = comp_nuevo.strip().upper() if comp_nuevo else ""
-                                c.execute("INSERT INTO insumos (nombre_articulo, familia, departamento, componentes, existencia, stock_minimo, stock_maximo) VALUES (%s, %s, %s, %s, 0, %s, %s) RETURNING id_insumo", (n_nuevo.strip().upper(), f_nueva, d_nuevo, comp_clean, s_min, s_max))
-                                id_creado = c.fetchone()[0]
-                                conn.commit()
-                                st.session_state.carrito_entradas.append({"id_insumo": id_creado, "nombre": n_nuevo.strip().upper(), "cajas": c_n, "piezas_caja": p_n, "total": c_n * p_n})
-                                st.rerun()
-                            except IntegrityError: 
-                                st.error("Ya existe.")
 
+                    # ==========================================
+                    # CASO 2: PRODUCTO NUEVO (ALTA AUTOMÁTICA)
+                    # ==========================================
+                    elif es_nuevo:
+                        st.info("🆕 **Producto nuevo detectado.** Completa sus datos para registrarlo en el catálogo y sumarlo a este ingreso:")
+                        
+                        nombre_inicial = "" if seleccion_art == "➕ REGISTRAR PRODUCTO NUEVO..." else seleccion_art.strip().upper()
+                        
+                        col_n1, col_n2, col_n3 = st.columns(3)
+                        n_nuevo = col_n1.text_input("Nombre / Presentación del Producto", value=nombre_inicial, key=f"nom_nv_{ent_key}")
+                        f_nueva = col_n2.selectbox("Familia", ["PRODUCTOS", "SERVICIOS"], key=f"fam_nv_{ent_key}")
+                        d_nuevo = col_n3.selectbox("Depto", ["EXAMENES", "SERVICIOS", "MEDICAMENTO", "ALIMENTOS", "VACUNAS", "ROPA", "ACCESORIOS"], index=2, key=f"dep_nv_{ent_key}")
+                        
+                        # Campo de Componentes + Botón de IA
+                        comp_key_state = f"comp_ia_ent_{ent_key}"
+                        if comp_key_state not in st.session_state:
+                            st.session_state[comp_key_state] = ""
+                            
+                        c_ia1, c_ia2 = st.columns([3, 1])
+                        comp_nuevo = c_ia1.text_input("🧬 Componentes Activos", value=st.session_state[comp_key_state], key=f"in_comp_nv_{ent_key}")
+                        c_ia2.write("")
+                        if c_ia2.button("✨ Sugerir con IA", key=f"btn_ia_nv_{ent_key}"):
+                            if not n_nuevo.strip():
+                                st.warning("Escribe primero el nombre del producto.")
+                            else:
+                                res_ia = obtener_componentes_ia(n_nuevo, API_KEY_GLOBAL)
+                                if "ERROR" not in res_ia:
+                                    st.session_state[comp_key_state] = res_ia.upper()
+                                    st.rerun()
+                                else:
+                                    st.error(res_ia)
+                        
+                        col_m1, col_m2, col_m3 = st.columns(3)
+                        s_min = col_m1.number_input("Stock Mínimo (Alerta)", min_value=0, value=2, key=f"min_nv_{ent_key}")
+                        s_max = col_m2.number_input("Stock Máximo (Meta)", min_value=1, value=10, key=f"max_nv_{ent_key}")
+                        s_est = col_m3.number_input("Entrega Estandarizada (0 = A petición)", min_value=0, value=0, key=f"est_nv_{ent_key}")
+                        
+                        img_nueva = st.file_uploader("📸 Subir Imagen del Producto (Opcional)", type=["jpg", "png", "jpeg"], key=f"img_nv_{ent_key}")
+                        
+                        st.markdown("---")
+                        col_c1, col_c2 = st.columns(2)
+                        c_n = col_c1.number_input("Cajas a ingresar", min_value=1, value=1, key=f"cajas_nv_{ent_key}")
+                        p_n = col_c2.number_input("Piezas x Caja", min_value=1, value=1, key=f"pzas_nv_{ent_key}")
+                        
+                        if st.button("➕ Crear en Catálogo y Agregar al Ingreso", type="primary", key=f"btn_add_nv_{ent_key}"):
+                            if not n_nuevo.strip():
+                                st.error("⚠️ El nombre del producto es obligatorio.")
+                            else:
+                                try:
+                                    c = conn.cursor()
+                                    comp_clean = comp_nuevo.strip().upper() if comp_nuevo else ""
+                                    img_b64_nv = base64.b64encode(img_nueva.getvalue()).decode() if img_nueva else None
+                                    
+                                    c.execute("""
+                                        INSERT INTO insumos (nombre_articulo, familia, departamento, componentes, existencia, stock_minimo, stock_maximo, cantidad_estandar, imagen_b64) 
+                                        VALUES (%s, %s, %s, %s, 0, %s, %s, %s, %s) RETURNING id_insumo
+                                    """, (n_nuevo.strip().upper(), f_nueva, d_nuevo, comp_clean, s_min, s_max, s_est, img_b64_nv))
+                                    
+                                    id_creado = c.fetchone()[0]
+                                    conn.commit()
+                                    
+                                    st.session_state.carrito_entradas.append({
+                                        "id_insumo": id_creado, 
+                                        "nombre": n_nuevo.strip().upper(), 
+                                        "cajas": c_n, 
+                                        "piezas_caja": p_n, 
+                                        "total": c_n * p_n
+                                    })
+                                    st.session_state["reset_ent_key"] = ent_key + 1
+                                    st.success("✅ Producto creado en el catálogo y añadido a la lista de ingreso.")
+                                    time.sleep(1)
+                                    st.rerun()
+                                except IntegrityError: 
+                                    st.error("⚠️ Ya existe un artículo con ese nombre exacto en el catálogo.")
+
+                # ==========================================
+                # LISTA DE ARTÍCULOS EN LA FACTURA ACTUAL
+                # ==========================================
                 if st.session_state.carrito_entradas:
                     st.divider()
+                    st.write("### 🛒 Artículos por Ingresar")
                     for idx, item in enumerate(st.session_state.carrito_entradas):
                         c1, c2, c3, c4, c5 = st.columns([3, 2, 2, 2, 1])
                         c1.write(item['nombre'])
@@ -598,15 +717,15 @@ elif rol == "Administrador":
                         if n_c != item['cajas'] or n_p != item['piezas_caja']:
                             st.session_state.carrito_entradas[idx].update({"cajas": n_c, "piezas_caja": n_p, "total": n_c * n_p})
                             st.rerun()
-                        c4.write(f"**{item['total']}**")
+                        c4.write(f"**{item['total']} uds**")
                         if c5.button("🗑️", key=f"de_{idx}"): 
                             st.session_state.carrito_entradas.pop(idx)
                             st.rerun()
 
-                    tipo = st.selectbox("Tipo", ["Compra / Factura", "Ajuste"])
-                    coment = st.text_input("Folio Factura")
-                    arch = st.file_uploader("Adjuntar", type=["pdf", "png", "jpg"])
-                    if st.button("✅ Guardar Factura", type="primary"):
+                    tipo = st.selectbox("Tipo de Movimiento", ["Compra / Factura", "Ajuste"])
+                    coment = st.text_input("Folio de Factura / Comentarios")
+                    arch = st.file_uploader("Adjuntar evidencia (PDF/Foto)", type=["pdf", "png", "jpg"])
+                    if st.button("✅ Guardar Factura e Ingresar Stock", type="primary"):
                         c = conn.cursor()
                         fh = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         info_a = ""
@@ -620,7 +739,8 @@ elif rol == "Administrador":
                             c.execute("UPDATE insumos SET existencia = existencia + %s WHERE id_insumo = %s", (item['total'], item['id_insumo']))
                         conn.commit()
                         st.session_state.carrito_entradas = []
-                        st.success("Guardado.")
+                        st.session_state["reset_ent_key"] = ent_key + 1
+                        st.success("✅ Stock actualizado y factura guardada.")
                         time.sleep(1)
                         st.rerun()
             finally: 
