@@ -10,7 +10,7 @@ import base64
 from PIL import Image
 
 # ==========================================
-# Cargar el ícono cuadrado (Asegúrate de tener icono_app.png en GitHub)
+# Cargar el ícono cuadrado
 try:
     logo_icono = Image.open("icono_app.png")
     st.set_page_config(page_title="Sistema de Insumos - Vet Playas", page_icon=logo_icono, layout="wide")
@@ -67,13 +67,11 @@ def init_db():
                         parametro TEXT PRIMARY KEY,
                         valor TEXT)''')
         
-        # Cargar áreas iniciales si la tabla está vacía
         c.execute("SELECT COUNT(*) FROM areas")
         if c.fetchone()[0] == 0:
             for area_inicial in ["HOSPITALIZACIÓN", "CONSULTORIO 1", "CONSULTORIO 2", "LIMPIEZA", "RECEPCIÓN"]:
                 c.execute("INSERT INTO areas (nombre_area) VALUES (%s) ON CONFLICT DO NOTHING", (area_inicial,))
         
-        # Migraciones de columnas
         c.execute("ALTER TABLE solicitudes ADD COLUMN IF NOT EXISTS quien_surte TEXT")
         c.execute("ALTER TABLE detalle_solicitud ADD COLUMN IF NOT EXISTS cantidad_entregada INTEGER")
         c.execute("ALTER TABLE insumos ADD COLUMN IF NOT EXISTS ruta_imagen TEXT")
@@ -103,14 +101,13 @@ if not os.path.exists("img_insumos"):
     os.makedirs("img_insumos")
 
 # ==========================================
-# FUNCIONES DE CONEXIÓN CON GEMINI IA (ULTRA-RÁPIDAS Y COMPATIBLES)
+# FUNCIONES DE CONEXIÓN CON GEMINI IA
 # ==========================================
 def obtener_componentes_ia(nombre_producto, api_key):
     try:
         import google.generativeai as genai
         genai.configure(api_key=api_key.strip())
         
-        # 🚀 VELOCIDAD MÁXIMA: Llamamos directo al modelo exacto que exige la API
         model = genai.GenerativeModel('models/gemini-3.8-flash')
         
         prompt = f"""Eres un experto farmacólogo veterinario. Tu única tarea es decirme los componentes activos (sustancias) del producto comercial: '{nombre_producto}'.
@@ -128,7 +125,6 @@ REGLAS ESTRICTAS:
         elif "ModuleNotFoundError" in error_str: return "ERROR_LIBRERIA"
         return f"ERROR: {error_str}"
 
-# 🚀 CACHÉ: Guarda el catálogo en memoria para no leer 350 filas en cada consulta
 @st.cache_data(ttl=60, show_spinner=False)
 def compilar_catalogo_ia(_df_catalogo):
     lista_productos = []
@@ -142,9 +138,7 @@ def recomendar_productos_ia(consulta_medico, df_catalogo, api_key):
         import google.generativeai as genai
         genai.configure(api_key=api_key.strip())
         
-        # 🚀 VELOCIDAD MÁXIMA: Llamamos directo al modelo exacto que exige la API
         model = genai.GenerativeModel('models/gemini-3.8-flash')
-        
         catalogo_str = compilar_catalogo_ia(df_catalogo)
         
         prompt = f"""Eres el asistente médico experto de la clínica Vet Playas. Inventario disponible:
@@ -165,6 +159,7 @@ REGLAS DE CRITERIO CLÍNICO VETERINARIO:
         if "429" in error_str or "quota" in error_str.lower(): return [], "ERROR_CUOTA"
         elif "ModuleNotFoundError" in error_str: return [], "LIBRERIA_FALTANTE"
         return [], error_str
+
 # ==========================================
 # VARIABLES DE SESIÓN
 # ==========================================
@@ -186,8 +181,30 @@ rol = st.sidebar.selectbox("Selecciona tu perfil:", ["Personal", "Administrador"
 # ==========================================
 # VISTAS COMPARTIDAS (PERSONAL Y ADMIN)
 # ==========================================
+@st.cache_data(ttl=5, show_spinner=False)
+def obtener_inventario_rapido():
+    conn = get_connection()
+    try: 
+        return pd.read_sql_query("""
+            SELECT id_insumo, nombre_articulo, familia, departamento, 
+                   existencia, stock_minimo, stock_maximo, cantidad_estandar, componentes 
+            FROM insumos ORDER BY nombre_articulo ASC
+        """, conn)
+    finally: 
+        conn.close()
+
+@st.cache_data(ttl=300, show_spinner=False)
+def obtener_foto_individual(id_insumo):
+    conn = get_connection()
+    try:
+        c = conn.cursor()
+        c.execute("SELECT imagen_b64 FROM insumos WHERE id_insumo = %s", (int(id_insumo),))
+        res = c.fetchone()
+        return res[0] if res else None
+    finally:
+        conn.close()
+
 def mostrar_tarjeta_producto(datos_articulo):
-    # La caja del borde sigue igual
     st.markdown("""
         <style>
         div[data-testid="stVerticalBlockBorderWrapper"] {
@@ -200,9 +217,9 @@ def mostrar_tarjeta_producto(datos_articulo):
     with st.container(border=True):
         col_img, col_info = st.columns([1.2, 2])
         with col_img:
-            imagen_b64 = datos_articulo.get('imagen_b64', None)
+            imagen_b64 = obtener_foto_individual(datos_articulo['id_insumo'])
+            
             if pd.notna(imagen_b64) and str(imagen_b64).strip() != "":
-                # 🚀 VELOCIDAD 3: HTML puro. Nos saltamos el lento procesador de imágenes de Python.
                 estilo_img = "max-width: 100%; max-height: 160px; object-fit: contain; margin: 0 auto; display: block;"
                 st.markdown(f'<img src="data:image/jpeg;base64,{imagen_b64}" style="{estilo_img}">', unsafe_allow_html=True)
             else:
@@ -291,7 +308,6 @@ def vista_solicitar_insumos():
                     "cantidad": cant_estandar if cant_estandar > 0 else cantidad,
                     "es_fijo": True if cant_estandar > 0 else False
                 })
-                # Limpiamos el buscador de artículos para el siguiente producto
                 st.session_state.reset_art_key += 1
                 st.rerun()
         
@@ -344,72 +360,81 @@ def vista_solicitar_insumos():
                 st.session_state.reset_art_key += 1
                 st.rerun()
 
-# ==========================================
-# VISTAS COMPARTIDAS (PERSONAL Y ADMIN)
-# ==========================================
-
-# 🚀 MAGIA 1: Descargamos solo los textos (sin las fotos) para que sea instantáneo
-@st.cache_data(ttl=5, show_spinner=False)
-def obtener_inventario_rapido():
-    conn = get_connection()
-    try: 
-        return pd.read_sql_query("""
-            SELECT id_insumo, nombre_articulo, familia, departamento, 
-                   existencia, stock_minimo, stock_maximo, cantidad_estandar, componentes 
-            FROM insumos ORDER BY nombre_articulo ASC
-        """, conn)
-    finally: 
-        conn.close()
-
-# 🚀 MAGIA 2: Función de descarga individual de fotos (con caché prolongada de 5 minutos)
-@st.cache_data(ttl=300, show_spinner=False)
-def obtener_foto_individual(id_insumo):
-    conn = get_connection()
-    try:
-        c = conn.cursor()
-        c.execute("SELECT imagen_b64 FROM insumos WHERE id_insumo = %s", (int(id_insumo),))
-        res = c.fetchone()
-        return res[0] if res else None
-    finally:
-        conn.close()
-
-def mostrar_tarjeta_producto(datos_articulo):
-    st.markdown("""
-        <style>
-        div[data-testid="stVerticalBlockBorderWrapper"] {
-            border: 1px solid rgba(128, 128, 128, 0.04) !important;
-            border-radius: 10px !important;
-        }
-        </style>
-    """, unsafe_allow_html=True)
-
-    with st.container(border=True):
-        col_img, col_info = st.columns([1.2, 2])
-        with col_img:
-            # 🚀 MAGIA 3: Solo descargamos la foto si el producto sobrevivió a tu filtro y se va a mostrar
-            imagen_b64 = obtener_foto_individual(datos_articulo['id_insumo'])
+def vista_consultar_inventario():
+    st.title("📦 Visor de Existencias")
+    df_inv = obtener_inventario_rapido()
+        
+    if not df_inv.empty:
+        tab_b1, tab_b2 = st.tabs(["🔍 Búsqueda Normal", "🤖 Asistente Médico (IA)"])
+        
+        with tab_b1:
+            col_f1, col_f2 = st.columns([2, 1])
+            busqueda_texto = col_f1.text_input(
+                "🔍 Buscar producto o sustancia (Presiona Enter para filtrar):", 
+                placeholder="Ej: BRAVECTO, TRAMADOL, GOTAS..."
+            )
+            deptos_disponibles = ["TODOS"] + sorted(df_inv['departamento'].dropna().unique().tolist())
+            depto_filtro = col_f2.selectbox("Filtrar por Departamento:", deptos_disponibles)
             
-            if pd.notna(imagen_b64) and str(imagen_b64).strip() != "":
-                estilo_img = "max-width: 100%; max-height: 160px; object-fit: contain; margin: 0 auto; display: block;"
-                st.markdown(f'<img src="data:image/jpeg;base64,{imagen_b64}" style="{estilo_img}">', unsafe_allow_html=True)
-            else:
-                st.caption("🚫 Sin foto")
+            df_filtrado = df_inv.copy()
+            if depto_filtro != "TODOS":
+                df_filtrado = df_filtrado[df_filtrado['departamento'] == depto_filtro]
+            
+            if busqueda_texto.strip() != "":
+                palabras = busqueda_texto.strip().upper().split()
+                texto_busqueda = (
+                    df_filtrado['nombre_articulo'].fillna('').astype(str) + " " + 
+                    df_filtrado['componentes'].fillna('').astype(str)
+                ).str.upper()
                 
-        with col_info:
-            st.markdown(f"**{datos_articulo['nombre_articulo']}**")
-            if pd.notna(datos_articulo['componentes']) and str(datos_articulo['componentes']).strip() not in ["", "N/A", "NONE"]:
-                st.caption(f"🧬 {datos_articulo['componentes']}")
-            st.caption(f"📁 {datos_articulo['departamento']}")
+                for palabra in palabras:
+                    df_filtrado = df_filtrado[texto_busqueda.str.contains(palabra, na=False, regex=False)]
+                    texto_busqueda = texto_busqueda.loc[df_filtrado.index]
             
-            ex = int(datos_articulo['existencia'])
-            s_min = int(datos_articulo.get('stock_minimo', 0))
+            total_encontrados = len(df_filtrado)
             
-            if ex > s_min:
-                st.markdown(f"🟢 **Existencia:** {ex} uds.")
-            elif ex > 0 and ex <= s_min:
-                st.markdown(f"🟡 **Existencia:** {ex} uds. *(Mínimo)*")
+            st.write("---")
+            st.write(f"### 📋 Catálogo Visual ({total_encontrados} productos encontrados)")
+            
+            if df_filtrado.empty:
+                st.warning("No se encontraron productos que coincidan con tu búsqueda.")
             else:
-                st.markdown(f"🔴 **Agotado:** 0 uds.")
+                LIMITE = 40
+                if total_encontrados > LIMITE:
+                    st.info(f"⚡ Para mantener la máxima velocidad, se muestran solo los primeros **{LIMITE}** resultados. Usa el buscador superior si necesitas un artículo específico.")
+                    df_filtrado = df_filtrado.head(LIMITE)
+
+                cols_cat = st.columns(2)
+                for idx, (_, row) in enumerate(df_filtrado.iterrows()):
+                    with cols_cat[idx % 2]:
+                        mostrar_tarjeta_producto(row)
+        
+        with tab_b2:
+            consulta_medico = st.text_input("Consulta a la IA (Ej: 'Antiinflamatorio ocular')")
+            if st.button("Consultar ✨", type="primary"):
+                if not API_KEY_GLOBAL: 
+                    st.error("⚠ IA no configurada.")
+                elif not consulta_medico: 
+                    st.warning("Escribe tu consulta.")
+                else:
+                    with st.spinner("Analizando inventario..."):
+                        resultados_ia, error_ia = recomendar_productos_ia(consulta_medico, df_inv, API_KEY_GLOBAL)
+                        if error_ia: 
+                            st.error(f"❌ Error: {error_ia}")
+                        elif not resultados_ia or "NINGUNO" in [r.upper() for r in resultados_ia]: 
+                            st.warning("No se encontró ningún producto relacionado.")
+                        else:
+                            st.write("---")
+                            cols_ia = st.columns(2)
+                            col_idx = 0
+                            for nombre_sugerido in resultados_ia:
+                                match = df_inv[df_inv['nombre_articulo'].str.upper() == nombre_sugerido.upper()]
+                                if not match.empty:
+                                    with cols_ia[col_idx % 2]:
+                                        mostrar_tarjeta_producto(match.iloc[0])
+                                    col_idx += 1
+    else: 
+        st.info("Catálogo vacío.")
 
 # ==========================================
 # MÓDULO: PERSONAL 
@@ -531,7 +556,6 @@ elif rol == "Administrador":
                 with st.container(border=True):
                     opciones_art = ["➕ REGISTRAR PRODUCTO NUEVO..."] + (insumos_df['nombre_articulo'].tolist() if not insumos_df.empty else [])
                     
-                    # Buscador inteligente: filtra existentes o permite escribir uno nuevo directamente
                     try:
                         seleccion_art = st.selectbox(
                             "🔍 Artículo (escribe para buscar en el catálogo o escribe un nombre nuevo y presiona Enter):",
@@ -559,9 +583,6 @@ elif rol == "Administrador":
                         else:
                             es_nuevo = True
                     
-                    # ==========================================
-                    # CASO 1: EL PRODUCTO YA EXISTE (AUTO-CARGA)
-                    # ==========================================
                     if es_existente:
                         datos_prod = insumos_df[insumos_df['nombre_articulo'] == seleccion_art].iloc[0]
                         id_ins = int(datos_prod['id_insumo'])
@@ -603,9 +624,6 @@ elif rol == "Administrador":
                             st.session_state["reset_ent_key"] = ent_key + 1
                             st.rerun()
 
-                    # ==========================================
-                    # CASO 2: PRODUCTO NUEVO (ALTA AUTOMÁTICA)
-                    # ==========================================
                     elif es_nuevo:
                         st.info("🆕 **Producto nuevo detectado.** Completa sus datos para registrarlo en el catálogo y sumarlo a este ingreso:")
                         
@@ -616,7 +634,6 @@ elif rol == "Administrador":
                         f_nueva = col_n2.selectbox("Familia", ["PRODUCTOS", "SERVICIOS"], key=f"fam_nv_{ent_key}")
                         d_nuevo = col_n3.selectbox("Depto", ["EXAMENES", "SERVICIOS", "MEDICAMENTO", "ALIMENTOS", "VACUNAS", "ROPA", "ACCESORIOS"], index=2, key=f"dep_nv_{ent_key}")
                         
-                        # Campo de Componentes + Botón de IA
                         comp_key_state = f"comp_ia_ent_{ent_key}"
                         if comp_key_state not in st.session_state:
                             st.session_state[comp_key_state] = ""
@@ -678,9 +695,6 @@ elif rol == "Administrador":
                                 except IntegrityError: 
                                     st.error("⚠️ Ya existe un artículo con ese nombre exacto en el catálogo.")
 
-                # ==========================================
-                # LISTA DE ARTÍCULOS EN LA FACTURA ACTUAL
-                # ==========================================
                 if st.session_state.carrito_entradas:
                     st.divider()
                     st.write("### 🛒 Artículos por Ingresar")
