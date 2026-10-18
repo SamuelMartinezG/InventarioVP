@@ -103,26 +103,15 @@ if not os.path.exists("img_insumos"):
     os.makedirs("img_insumos")
 
 # ==========================================
-# FUNCIONES DE CONEXIÓN CON GEMINI IA
+# FUNCIONES DE CONEXIÓN CON GEMINI IA (OPTIMIZADAS)
 # ==========================================
-def obtener_modelo_activo():
-    import google.generativeai as genai
-    try:
-        modelos = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        for m in modelos:
-            if 'gemini-3.8-flash' in m: return m
-        for m in modelos:
-            if '3.8' in m: return m
-    except Exception:
-        pass
-    return 'gemini-3.8-flash'
-
 def obtener_componentes_ia(nombre_producto, api_key):
     try:
         import google.generativeai as genai
         genai.configure(api_key=api_key.strip())
-        modelo_destino = obtener_modelo_activo()
-        model = genai.GenerativeModel(modelo_destino)
+        
+        # 🚀 VELOCIDAD 1: Llamamos directamente al modelo más rápido sin consultar listas previas
+        model = genai.GenerativeModel('gemini-1.5-flash')
         
         prompt = f"""Eres un experto farmacólogo veterinario. Tu única tarea es decirme los componentes activos (sustancias) del producto comercial: '{nombre_producto}'.
 REGLAS ESTRICTAS:
@@ -139,19 +128,24 @@ REGLAS ESTRICTAS:
         elif "ModuleNotFoundError" in error_str: return "ERROR_LIBRERIA"
         return f"ERROR: {error_str}"
 
+# 🚀 VELOCIDAD 2: Caché para el texto del catálogo (evita procesar 350 filas en cada pregunta)
+@st.cache_data(ttl=60, show_spinner=False)
+def compilar_catalogo_ia(_df_catalogo):
+    lista_productos = []
+    for _, row in _df_catalogo.iterrows():
+        comp = row['componentes'] if pd.notna(row['componentes']) and str(row['componentes']).strip() not in ["", "N/A"] else "Desconocido"
+        lista_productos.append(f"{row['nombre_articulo']} [Sustancia: {comp}]")
+    return "\n".join(lista_productos)
+
 def recomendar_productos_ia(consulta_medico, df_catalogo, api_key):
     try:
         import google.generativeai as genai
         genai.configure(api_key=api_key.strip())
-        modelo_destino = obtener_modelo_activo()
-        model = genai.GenerativeModel(modelo_destino)
         
-        lista_productos = []
-        for _, row in df_catalogo.iterrows():
-            comp = row['componentes'] if pd.notna(row['componentes']) and str(row['componentes']).strip() not in ["", "N/A"] else "Desconocido (Deduce su sustancia y uso por el nombre comercial)"
-            lista_productos.append(f"{row['nombre_articulo']} [Sustancia: {comp}]")
+        # 🚀 Usamos el modelo ultra-rápido directamente
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        catalogo_str = compilar_catalogo_ia(df_catalogo)
         
-        catalogo_str = "\n".join(lista_productos)
         prompt = f"""Eres el asistente médico experto de la clínica Vet Playas. Inventario disponible:
 {catalogo_str}
 
@@ -159,9 +153,8 @@ Consulta del médico: "{consulta_medico}"
 
 REGLAS DE CRITERIO CLÍNICO VETERINARIO:
 1. Analiza las sustancias activas y nombres comerciales con criterio práctico de consultorio veterinario, NO como un diccionario rígido.
-2. Incluye tanto los fármacos de acción primaria directa como aquellos cuya sustancia activa tenga acción secundaria, protectora, regeneradora, lubricante o coadyuvante para el problema o vía anatómica consultada (por ejemplo, en consultas de "antiinflamatorio ocular", incluye también protectores/regeneradores corneales como el Condroitín Sulfato o lágrimas oftálmicas que alivian la inflamación de superficie).
-3. Fíjate en la presentación del producto (GOTAS, OFTÁLMICO, TABLETA, SUSPENSIÓN) para asegurar que coincida con lo que busca el médico.
-4. Devuelve ÚNICAMENTE los nombres exactos de los productos del inventario anterior separados por el símbolo |. Si ningún producto tiene relación, responde "NINGUNO". Sin explicaciones ni saludos."""
+2. Incluye tanto los fármacos de acción primaria directa como aquellos cuya sustancia activa tenga acción secundaria, protectora, regeneradora, lubricante o coadyuvante.
+3. Devuelve ÚNICAMENTE los nombres exactos de los productos del inventario anterior separados por el símbolo |. Si ningún producto tiene relación, responde "NINGUNO". Sin explicaciones ni saludos."""
         
         response = model.generate_content(prompt)
         nombres = response.text.strip().split('|')
@@ -194,24 +187,12 @@ rol = st.sidebar.selectbox("Selecciona tu perfil:", ["Personal", "Administrador"
 # VISTAS COMPARTIDAS (PERSONAL Y ADMIN)
 # ==========================================
 def mostrar_tarjeta_producto(datos_articulo):
+    # La caja del borde sigue igual
     st.markdown("""
         <style>
         div[data-testid="stVerticalBlockBorderWrapper"] {
             border: 1px solid rgba(128, 128, 128, 0.04) !important;
             border-radius: 10px !important;
-        }
-        div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stImage"] img {
-            max-width: 160px !important;
-            max-height: 160px !important;
-            object-fit: contain !important;
-            margin: 0 auto !important;
-            display: block !important;
-        }
-        @media (max-width: 768px) {
-            div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stImage"] img {
-                max-width: 230px !important;
-                max-height: 230px !important;
-            }
         }
         </style>
     """, unsafe_allow_html=True)
@@ -221,12 +202,12 @@ def mostrar_tarjeta_producto(datos_articulo):
         with col_img:
             imagen_b64 = datos_articulo.get('imagen_b64', None)
             if pd.notna(imagen_b64) and str(imagen_b64).strip() != "":
-                try:
-                    st.image(base64.b64decode(imagen_b64), use_container_width=True)
-                except Exception:
-                    st.caption("📷 Error")
+                # 🚀 VELOCIDAD 3: HTML puro. Nos saltamos el lento procesador de imágenes de Python.
+                estilo_img = "max-width: 100%; max-height: 160px; object-fit: contain; margin: 0 auto; display: block;"
+                st.markdown(f'<img src="data:image/jpeg;base64,{imagen_b64}" style="{estilo_img}">', unsafe_allow_html=True)
             else:
                 st.caption("🚫 Sin foto")
+                
         with col_info:
             st.markdown(f"**{datos_articulo['nombre_articulo']}**")
             if pd.notna(datos_articulo['componentes']) and str(datos_articulo['componentes']).strip() not in ["", "N/A", "NONE"]:
