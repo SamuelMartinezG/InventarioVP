@@ -110,8 +110,8 @@ def obtener_componentes_ia(nombre_producto, api_key):
         import google.generativeai as genai
         genai.configure(api_key=api_key.strip())
         
-        # 🚀 VELOCIDAD 1: Llamamos directamente al modelo más rápido sin consultar listas previas
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # Usamos el modelo universal y altamente compatible
+        model = genai.GenerativeModel('gemini-pro')
         
         prompt = f"""Eres un experto farmacólogo veterinario. Tu única tarea es decirme los componentes activos (sustancias) del producto comercial: '{nombre_producto}'.
 REGLAS ESTRICTAS:
@@ -128,7 +128,6 @@ REGLAS ESTRICTAS:
         elif "ModuleNotFoundError" in error_str: return "ERROR_LIBRERIA"
         return f"ERROR: {error_str}"
 
-# 🚀 VELOCIDAD 2: Caché para el texto del catálogo (evita procesar 350 filas en cada pregunta)
 @st.cache_data(ttl=60, show_spinner=False)
 def compilar_catalogo_ia(_df_catalogo):
     lista_productos = []
@@ -142,8 +141,8 @@ def recomendar_productos_ia(consulta_medico, df_catalogo, api_key):
         import google.generativeai as genai
         genai.configure(api_key=api_key.strip())
         
-        # 🚀 Usamos el modelo ultra-rápido directamente
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # Usamos el modelo universal y altamente compatible
+        model = genai.GenerativeModel('gemini-pro')
         catalogo_str = compilar_catalogo_ia(df_catalogo)
         
         prompt = f"""Eres el asistente médico experto de la clínica Vet Playas. Inventario disponible:
@@ -164,7 +163,6 @@ REGLAS DE CRITERIO CLÍNICO VETERINARIO:
         if "429" in error_str or "quota" in error_str.lower(): return [], "ERROR_CUOTA"
         elif "ModuleNotFoundError" in error_str: return [], "LIBRERIA_FALTANTE"
         return [], error_str
-
 # ==========================================
 # VARIABLES DE SESIÓN
 # ==========================================
