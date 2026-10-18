@@ -363,13 +363,21 @@ def vista_solicitar_insumos():
                 st.session_state.reset_art_key += 1
                 st.rerun()
 
-def vista_consultar_inventario():
-    st.title("📦 Visor de Existencias")
+# 🚀 1. MOTOR CACHÉ ANTI-LAG (Guarda la consulta 5 segundos para que escribir sea instantáneo)
+@st.cache_data(ttl=5, show_spinner=False)
+def obtener_inventario_rapido():
     conn = get_connection()
     try: 
-        df_inv = pd.read_sql_query("SELECT * FROM insumos ORDER BY nombre_articulo ASC", conn)
+        return pd.read_sql_query("SELECT * FROM insumos ORDER BY nombre_articulo ASC", conn)
     finally: 
         conn.close()
+
+# 🚀 2. VISTA OPTIMIZADA (Límite visual de 40 imágenes)
+def vista_consultar_inventario():
+    st.title("📦 Visor de Existencias")
+    
+    # Mandamos llamar la caché en vez de conectarnos directo a PostgreSQL cada vez
+    df_inv = obtener_inventario_rapido()
         
     if not df_inv.empty:
         tab_b1, tab_b2 = st.tabs(["🔍 Búsqueda Normal", "🤖 Asistente Médico (IA)"])
@@ -398,17 +406,25 @@ def vista_consultar_inventario():
                     df_filtrado = df_filtrado[texto_busqueda.str.contains(palabra, na=False, regex=False)]
                     texto_busqueda = texto_busqueda.loc[df_filtrado.index]
             
+            total_encontrados = len(df_filtrado)
+            
             st.write("---")
-            st.write(f"### 📋 Catálogo Visual ({len(df_filtrado)} productos encontrados)")
+            st.write(f"### 📋 Catálogo Visual ({total_encontrados} productos encontrados)")
             
             if df_filtrado.empty:
                 st.warning("No se encontraron productos que coincidan con tu búsqueda.")
             else:
+                # MAGIA ANTI-LAG: Forzamos el límite para no saturar la memoria gráfica del celular/PC
+                LIMITE = 40
+                if total_encontrados > LIMITE:
+                    st.info(f"⚡ Para mantener la máxima velocidad, se muestran solo los primeros **{LIMITE}** resultados. Usa el buscador superior si necesitas un artículo específico.")
+                    df_filtrado = df_filtrado.head(LIMITE)
+
                 cols_cat = st.columns(2)
                 for idx, (_, row) in enumerate(df_filtrado.iterrows()):
                     with cols_cat[idx % 2]:
                         mostrar_tarjeta_producto(row)
-            
+        
         with tab_b2:
             consulta_medico = st.text_input("Consulta a la IA (Ej: 'Antiinflamatorio ocular')")
             if st.button("Consultar ✨", type="primary"):
