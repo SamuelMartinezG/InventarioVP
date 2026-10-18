@@ -103,15 +103,32 @@ if not os.path.exists("img_insumos"):
     os.makedirs("img_insumos")
 
 # ==========================================
-# FUNCIONES DE CONEXIÓN CON GEMINI IA (OPTIMIZADAS)
+# FUNCIONES DE CONEXIÓN CON GEMINI IA (OPTIMIZADAS Y SEGURAS)
 # ==========================================
+@st.cache_data(ttl=3600, show_spinner=False)
+def obtener_modelo_valido(api_key):
+    # Esto tarda unos segundos, pero gracias al caché, solo se ejecuta UNA VEZ por hora.
+    import google.generativeai as genai
+    genai.configure(api_key=api_key.strip())
+    try:
+        modelos = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        # Busca el modelo "flash" (más rápido) o "pro" que esté disponible en tu versión exacta
+        for m in modelos:
+            if 'flash' in m.lower(): return m
+        for m in modelos:
+            if 'pro' in m.lower(): return m
+        return modelos[0] if modelos else 'models/gemini-1.0-pro'
+    except Exception:
+        return 'models/gemini-1.0-pro'
+
 def obtener_componentes_ia(nombre_producto, api_key):
     try:
         import google.generativeai as genai
         genai.configure(api_key=api_key.strip())
         
-        # Usamos el modelo universal y altamente compatible
-        model = genai.GenerativeModel('gemini-pro')
+        # Llama al modelo guardado en memoria de forma instantánea
+        modelo_exacto = obtener_modelo_valido(api_key)
+        model = genai.GenerativeModel(modelo_exacto)
         
         prompt = f"""Eres un experto farmacólogo veterinario. Tu única tarea es decirme los componentes activos (sustancias) del producto comercial: '{nombre_producto}'.
 REGLAS ESTRICTAS:
@@ -141,8 +158,10 @@ def recomendar_productos_ia(consulta_medico, df_catalogo, api_key):
         import google.generativeai as genai
         genai.configure(api_key=api_key.strip())
         
-        # Usamos el modelo universal y altamente compatible
-        model = genai.GenerativeModel('gemini-pro')
+        # Llama al modelo guardado en memoria de forma instantánea
+        modelo_exacto = obtener_modelo_valido(api_key)
+        model = genai.GenerativeModel(modelo_exacto)
+        
         catalogo_str = compilar_catalogo_ia(df_catalogo)
         
         prompt = f"""Eres el asistente médico experto de la clínica Vet Playas. Inventario disponible:
