@@ -812,12 +812,12 @@ elif rol == "Administrador":
                 
                 conn = get_connection()
                 try:
-                    # Traemos lo entregado los últimos 30 días (Consumo Real)
+                    # Traemos lo entregado los últimos 30 días (Consumo Real) y convertimos el texto a timestamp
                     df_consumo = pd.read_sql_query("""
                         SELECT d.id_insumo, SUM(d.cantidad_entregada) as total_30d 
                         FROM detalle_solicitud d 
                         JOIN solicitudes s ON d.id_solicitud = s.id_solicitud 
-                        WHERE s.estado = 'SURTIDA' AND s.fecha_hora >= NOW() - INTERVAL '30 days'
+                        WHERE s.estado = 'SURTIDA' AND s.fecha_hora::timestamp >= NOW() - INTERVAL '30 days'
                         GROUP BY d.id_insumo
                     """, conn)
                     # Traemos catálogo y tiempos del proveedor
