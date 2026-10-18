@@ -344,94 +344,72 @@ def vista_solicitar_insumos():
                 st.session_state.reset_art_key += 1
                 st.rerun()
 
-# 🚀 1. MOTOR CACHÉ ANTI-LAG (Guarda la consulta 5 segundos para que escribir sea instantáneo)
+# ==========================================
+# VISTAS COMPARTIDAS (PERSONAL Y ADMIN)
+# ==========================================
+
+# 🚀 MAGIA 1: Descargamos solo los textos (sin las fotos) para que sea instantáneo
 @st.cache_data(ttl=5, show_spinner=False)
 def obtener_inventario_rapido():
     conn = get_connection()
     try: 
-        return pd.read_sql_query("SELECT * FROM insumos ORDER BY nombre_articulo ASC", conn)
+        return pd.read_sql_query("""
+            SELECT id_insumo, nombre_articulo, familia, departamento, 
+                   existencia, stock_minimo, stock_maximo, cantidad_estandar, componentes 
+            FROM insumos ORDER BY nombre_articulo ASC
+        """, conn)
     finally: 
         conn.close()
 
-# 🚀 2. VISTA OPTIMIZADA (Límite visual de 40 imágenes)
-def vista_consultar_inventario():
-    st.title("📦 Visor de Existencias")
-    
-    # Mandamos llamar la caché en vez de conectarnos directo a PostgreSQL cada vez
-    df_inv = obtener_inventario_rapido()
-        
-    if not df_inv.empty:
-        tab_b1, tab_b2 = st.tabs(["🔍 Búsqueda Normal", "🤖 Asistente Médico (IA)"])
-        
-        with tab_b1:
-            col_f1, col_f2 = st.columns([2, 1])
-            busqueda_texto = col_f1.text_input(
-                "🔍 Buscar producto o sustancia (Presiona Enter para filtrar):", 
-                placeholder="Ej: BRAVECTO, TRAMADOL, GOTAS..."
-            )
-            deptos_disponibles = ["TODOS"] + sorted(df_inv['departamento'].dropna().unique().tolist())
-            depto_filtro = col_f2.selectbox("Filtrar por Departamento:", deptos_disponibles)
-            
-            df_filtrado = df_inv.copy()
-            if depto_filtro != "TODOS":
-                df_filtrado = df_filtrado[df_filtrado['departamento'] == depto_filtro]
-            
-            if busqueda_texto.strip() != "":
-                palabras = busqueda_texto.strip().upper().split()
-                texto_busqueda = (
-                    df_filtrado['nombre_articulo'].fillna('').astype(str) + " " + 
-                    df_filtrado['componentes'].fillna('').astype(str)
-                ).str.upper()
-                
-                for palabra in palabras:
-                    df_filtrado = df_filtrado[texto_busqueda.str.contains(palabra, na=False, regex=False)]
-                    texto_busqueda = texto_busqueda.loc[df_filtrado.index]
-            
-            total_encontrados = len(df_filtrado)
-            
-            st.write("---")
-            st.write(f"### 📋 Catálogo Visual ({total_encontrados} productos encontrados)")
-            
-            if df_filtrado.empty:
-                st.warning("No se encontraron productos que coincidan con tu búsqueda.")
-            else:
-                # MAGIA ANTI-LAG: Forzamos el límite para no saturar la memoria gráfica del celular/PC
-                LIMITE = 40
-                if total_encontrados > LIMITE:
-                    st.info(f"⚡ Para mantener la máxima velocidad, se muestran solo los primeros **{LIMITE}** resultados. Usa el buscador superior si necesitas un artículo específico.")
-                    df_filtrado = df_filtrado.head(LIMITE)
+# 🚀 MAGIA 2: Función de descarga individual de fotos (con caché prolongada de 5 minutos)
+@st.cache_data(ttl=300, show_spinner=False)
+def obtener_foto_individual(id_insumo):
+    conn = get_connection()
+    try:
+        c = conn.cursor()
+        c.execute("SELECT imagen_b64 FROM insumos WHERE id_insumo = %s", (int(id_insumo),))
+        res = c.fetchone()
+        return res[0] if res else None
+    finally:
+        conn.close()
 
-                cols_cat = st.columns(2)
-                for idx, (_, row) in enumerate(df_filtrado.iterrows()):
-                    with cols_cat[idx % 2]:
-                        mostrar_tarjeta_producto(row)
-        
-        with tab_b2:
-            consulta_medico = st.text_input("Consulta a la IA (Ej: 'Antiinflamatorio ocular')")
-            if st.button("Consultar ✨", type="primary"):
-                if not API_KEY_GLOBAL: 
-                    st.error("⚠ IA no configurada.")
-                elif not consulta_medico: 
-                    st.warning("Escribe tu consulta.")
-                else:
-                    with st.spinner("Analizando inventario..."):
-                        resultados_ia, error_ia = recomendar_productos_ia(consulta_medico, df_inv, API_KEY_GLOBAL)
-                        if error_ia: 
-                            st.error(f"❌ Error: {error_ia}")
-                        elif not resultados_ia or "NINGUNO" in [r.upper() for r in resultados_ia]: 
-                            st.warning("No se encontró ningún producto relacionado.")
-                        else:
-                            st.write("---")
-                            cols_ia = st.columns(2)
-                            col_idx = 0
-                            for nombre_sugerido in resultados_ia:
-                                match = df_inv[df_inv['nombre_articulo'].str.upper() == nombre_sugerido.upper()]
-                                if not match.empty:
-                                    with cols_ia[col_idx % 2]:
-                                        mostrar_tarjeta_producto(match.iloc[0])
-                                    col_idx += 1
-    else: 
-        st.info("Catálogo vacío.")
+def mostrar_tarjeta_producto(datos_articulo):
+    st.markdown("""
+        <style>
+        div[data-testid="stVerticalBlockBorderWrapper"] {
+            border: 1px solid rgba(128, 128, 128, 0.04) !important;
+            border-radius: 10px !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+    with st.container(border=True):
+        col_img, col_info = st.columns([1.2, 2])
+        with col_img:
+            # 🚀 MAGIA 3: Solo descargamos la foto si el producto sobrevivió a tu filtro y se va a mostrar
+            imagen_b64 = obtener_foto_individual(datos_articulo['id_insumo'])
+            
+            if pd.notna(imagen_b64) and str(imagen_b64).strip() != "":
+                estilo_img = "max-width: 100%; max-height: 160px; object-fit: contain; margin: 0 auto; display: block;"
+                st.markdown(f'<img src="data:image/jpeg;base64,{imagen_b64}" style="{estilo_img}">', unsafe_allow_html=True)
+            else:
+                st.caption("🚫 Sin foto")
+                
+        with col_info:
+            st.markdown(f"**{datos_articulo['nombre_articulo']}**")
+            if pd.notna(datos_articulo['componentes']) and str(datos_articulo['componentes']).strip() not in ["", "N/A", "NONE"]:
+                st.caption(f"🧬 {datos_articulo['componentes']}")
+            st.caption(f"📁 {datos_articulo['departamento']}")
+            
+            ex = int(datos_articulo['existencia'])
+            s_min = int(datos_articulo.get('stock_minimo', 0))
+            
+            if ex > s_min:
+                st.markdown(f"🟢 **Existencia:** {ex} uds.")
+            elif ex > 0 and ex <= s_min:
+                st.markdown(f"🟡 **Existencia:** {ex} uds. *(Mínimo)*")
+            else:
+                st.markdown(f"🔴 **Agotado:** 0 uds.")
 
 # ==========================================
 # MÓDULO: PERSONAL 
