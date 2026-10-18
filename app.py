@@ -103,32 +103,15 @@ if not os.path.exists("img_insumos"):
     os.makedirs("img_insumos")
 
 # ==========================================
-# FUNCIONES DE CONEXIÓN CON GEMINI IA (OPTIMIZADAS Y SEGURAS)
+# FUNCIONES DE CONEXIÓN CON GEMINI IA (ULTRA-RÁPIDAS Y COMPATIBLES)
 # ==========================================
-@st.cache_data(ttl=3600, show_spinner=False)
-def obtener_modelo_valido(api_key):
-    # Esto tarda unos segundos, pero gracias al caché, solo se ejecuta UNA VEZ por hora.
-    import google.generativeai as genai
-    genai.configure(api_key=api_key.strip())
-    try:
-        modelos = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        # Busca el modelo "flash" (más rápido) o "pro" que esté disponible en tu versión exacta
-        for m in modelos:
-            if 'flash' in m.lower(): return m
-        for m in modelos:
-            if 'pro' in m.lower(): return m
-        return modelos[0] if modelos else 'models/gemini-1.0-pro'
-    except Exception:
-        return 'models/gemini-1.0-pro'
-
 def obtener_componentes_ia(nombre_producto, api_key):
     try:
         import google.generativeai as genai
         genai.configure(api_key=api_key.strip())
         
-        # Llama al modelo guardado en memoria de forma instantánea
-        modelo_exacto = obtener_modelo_valido(api_key)
-        model = genai.GenerativeModel(modelo_exacto)
+        # 🚀 VELOCIDAD MÁXIMA: Llamamos directo al modelo exacto que exige la API
+        model = genai.GenerativeModel('models/gemini-3.8-flash')
         
         prompt = f"""Eres un experto farmacólogo veterinario. Tu única tarea es decirme los componentes activos (sustancias) del producto comercial: '{nombre_producto}'.
 REGLAS ESTRICTAS:
@@ -145,6 +128,7 @@ REGLAS ESTRICTAS:
         elif "ModuleNotFoundError" in error_str: return "ERROR_LIBRERIA"
         return f"ERROR: {error_str}"
 
+# 🚀 CACHÉ: Guarda el catálogo en memoria para no leer 350 filas en cada consulta
 @st.cache_data(ttl=60, show_spinner=False)
 def compilar_catalogo_ia(_df_catalogo):
     lista_productos = []
@@ -158,9 +142,8 @@ def recomendar_productos_ia(consulta_medico, df_catalogo, api_key):
         import google.generativeai as genai
         genai.configure(api_key=api_key.strip())
         
-        # Llama al modelo guardado en memoria de forma instantánea
-        modelo_exacto = obtener_modelo_valido(api_key)
-        model = genai.GenerativeModel(modelo_exacto)
+        # 🚀 VELOCIDAD MÁXIMA: Llamamos directo al modelo exacto que exige la API
+        model = genai.GenerativeModel('models/gemini-3.8-flash')
         
         catalogo_str = compilar_catalogo_ia(df_catalogo)
         
