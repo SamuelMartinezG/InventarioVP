@@ -92,7 +92,6 @@ def init_db():
         c.execute("ALTER TABLE insumos ADD COLUMN IF NOT EXISTS stock_maximo INTEGER DEFAULT 0")
         c.execute("ALTER TABLE insumos ADD COLUMN IF NOT EXISTS cantidad_estandar INTEGER DEFAULT 0")
         c.execute("ALTER TABLE insumos ADD COLUMN IF NOT EXISTS proveedor TEXT")
-        # 🚀 NUEVA COLUMNA: Piezas por empaque para compras inteligentes
         c.execute("ALTER TABLE insumos ADD COLUMN IF NOT EXISTS piezas_por_empaque INTEGER DEFAULT 1")
         conn.commit()
     finally:
@@ -762,14 +761,14 @@ elif rol == "Administrador":
                 else: st.info("No hay artículos en el catálogo.")
                     
             with tab_masiva:
-                st.write("**Carga Masiva desde Excel**")
-                st.info("El archivo Excel debe tener la columna: PRODUCTO. Opcionales: PROVEEDOR, MINIMO, MAXIMO, PZAS_EMPAQUE, ESTANDAR, FAMILIA, DEPARTAMENTO.")
-                archivo_masivo = st.file_uploader("Sube tu catálogo completo", type=["xls", "xlsx"])
+                st.write("**Carga y Actualización Masiva desde Excel**")
+                st.info("Descarga tu 'Inventario Total' en Reportes, edítalo y súbelo aquí para actualizar inventario y datos.")
+                archivo_masivo = st.file_uploader("Sube tu catálogo en Excel", type=["xls", "xlsx"])
                 if archivo_masivo:
                     df_masivo = pd.read_excel(archivo_masivo)
                     df_masivo.columns = [str(c).strip().upper() for c in df_masivo.columns]
                     if 'PRODUCTO' in df_masivo.columns:
-                        if st.button("🚀 Iniciar Carga de Catálogo", type="primary"):
+                        if st.button("🚀 Procesar Excel", type="primary"):
                             conn = get_connection()
                             try:
                                 c = conn.cursor()
@@ -780,6 +779,11 @@ elif rol == "Administrador":
                                     f = str(row.get('FAMILIA', 'PRODUCTOS')).strip().upper() if 'FAMILIA' in df_masivo.columns and pd.notna(row.get('FAMILIA')) else 'PRODUCTOS'
                                     d = str(row.get('DEPARTAMENTO', 'MEDICAMENTO')).strip().upper() if 'DEPARTAMENTO' in df_masivo.columns and pd.notna(row.get('DEPARTAMENTO')) else 'MEDICAMENTO'
                                     pr = str(row.get('PROVEEDOR', 'GENERAL')).strip().upper() if 'PROVEEDOR' in df_masivo.columns and pd.notna(row.get('PROVEEDOR')) else 'GENERAL'
+                                    
+                                    try: 
+                                        ex_val = row.get('EXISTENCIA')
+                                        ex = int(float(ex_val)) if pd.notna(ex_val) and str(ex_val).strip() != "" else None
+                                    except: ex = None
                                     
                                     try: s_min = int(float(row.get('MINIMO', 0))) if 'MINIMO' in df_masivo.columns else 0
                                     except: s_min = 0
@@ -792,14 +796,21 @@ elif rol == "Administrador":
                                     
                                     try:
                                         c.execute("INSERT INTO proveedores (nombre_proveedor) VALUES (%s) ON CONFLICT DO NOTHING", (pr,))
-                                        c.execute("""INSERT INTO insumos (nombre_articulo, familia, departamento, existencia, stock_minimo, stock_maximo, cantidad_estandar, proveedor, piezas_por_empaque) 
-                                            VALUES (%s, %s, %s, 0, %s, %s, %s, %s, %s) ON CONFLICT (nombre_articulo) 
-                                            DO UPDATE SET stock_minimo = EXCLUDED.stock_minimo, stock_maximo = EXCLUDED.stock_maximo, cantidad_estandar = EXCLUDED.cantidad_estandar, proveedor = EXCLUDED.proveedor, piezas_por_empaque = EXCLUDED.piezas_por_empaque
-                                        """, (p, f, d, s_min, s_max, s_est, pr, pzas_e))
+                                        
+                                        if ex is not None:
+                                            c.execute("""INSERT INTO insumos (nombre_articulo, familia, departamento, existencia, stock_minimo, stock_maximo, cantidad_estandar, proveedor, piezas_por_empaque) 
+                                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (nombre_articulo) 
+                                                DO UPDATE SET existencia = EXCLUDED.existencia, stock_minimo = EXCLUDED.stock_minimo, stock_maximo = EXCLUDED.stock_maximo, cantidad_estandar = EXCLUDED.cantidad_estandar, proveedor = EXCLUDED.proveedor, piezas_por_empaque = EXCLUDED.piezas_por_empaque
+                                            """, (p, f, d, ex, s_min, s_max, s_est, pr, pzas_e))
+                                        else:
+                                            c.execute("""INSERT INTO insumos (nombre_articulo, familia, departamento, existencia, stock_minimo, stock_maximo, cantidad_estandar, proveedor, piezas_por_empaque) 
+                                                VALUES (%s, %s, %s, 0, %s, %s, %s, %s, %s) ON CONFLICT (nombre_articulo) 
+                                                DO UPDATE SET stock_minimo = EXCLUDED.stock_minimo, stock_maximo = EXCLUDED.stock_maximo, cantidad_estandar = EXCLUDED.cantidad_estandar, proveedor = EXCLUDED.proveedor, piezas_por_empaque = EXCLUDED.piezas_por_empaque
+                                            """, (p, f, d, s_min, s_max, s_est, pr, pzas_e))
                                         count_ok += 1
                                     except Exception: count_errores += 1
                                 conn.commit()
-                                st.success(f"✅ ¡Éxito! {count_ok} artículos subidos/actualizados.")
+                                st.success(f"✅ ¡Éxito! {count_ok} artículos subidos/actualizados correctamente.")
                             finally: conn.close()
                     else: st.error("❌ El archivo no tiene la columna 'PRODUCTO'.")
 
@@ -841,14 +852,12 @@ elif rol == "Administrador":
                     df_pedir['max_ia'] = df_pedir['min_real'] + (df_pedir['consumo_diario'] * 15)
                     df_pedir['max_real'] = df_pedir.apply(lambda x: x['max_ia'] if x['total_30d'] > 0 else x['stock_maximo'], axis=1)
                     
-                    # 🚀 MAGIA LOGÍSTICA: Dividimos los faltantes entre las piezas por empaque y redondeamos hacia arriba.
                     df_pedir['Unidades_Faltantes'] = df_pedir['max_real'] - df_pedir['existencia']
                     df_pedir['Empaques_A_Pedir'] = df_pedir.apply(lambda x: max(1, math.ceil(x['Unidades_Faltantes'] / x['piezas_empaque'])), axis=1)
                     
                     df_pedir['Artículo'] = df_pedir['nombre_articulo']
                     df_pedir['Proveedor'] = df_pedir['proveedor']
                     
-                    # 🚀 Ocultamos la existencia en la tabla y en el PDF
                     df_final_pdf = df_pedir[['Proveedor', 'Artículo', 'Empaques_A_Pedir']].sort_values(by=['Proveedor', 'Artículo'])
                     df_final_pdf.rename(columns={'Empaques_A_Pedir': 'Cant. (Cajas/Frascos)'}, inplace=True)
                     st.dataframe(df_final_pdf, hide_index=True)
@@ -886,16 +895,32 @@ elif rol == "Administrador":
                 conn = get_connection()
                 try:
                     df_compras = pd.read_sql_query("""SELECT nombre_articulo as "Artículo", familia as "Familia", departamento as "Departamento", existencia as "Stock_Actual", stock_minimo as "Mínimo", stock_maximo as "Máximo", (stock_maximo - existencia) as "Cantidad_A_Pedir" FROM insumos WHERE existencia <= stock_minimo ORDER BY departamento ASC, nombre_articulo ASC""", conn)
-                    df_inv = pd.read_sql_query("SELECT nombre_articulo, existencia, stock_minimo, stock_maximo, COALESCE(cantidad_estandar, 0) as cantidad_estandar FROM insumos ORDER BY nombre_articulo ASC", conn)
+                    
+                    # 🚀 PLANTILLA MAESTRA: Se renombran las columnas para que empate perfecto con la Carga Masiva
+                    df_inv = pd.read_sql_query("""
+                        SELECT nombre_articulo as "PRODUCTO", 
+                               existencia as "EXISTENCIA", 
+                               stock_minimo as "MINIMO", 
+                               stock_maximo as "MAXIMO", 
+                               COALESCE(cantidad_estandar, 0) as "ESTANDAR", 
+                               COALESCE(piezas_por_empaque, 1) as "PZAS_EMPAQUE", 
+                               COALESCE(proveedor, 'GENERAL') as "PROVEEDOR",
+                               familia as "FAMILIA",
+                               departamento as "DEPARTAMENTO"
+                        FROM insumos ORDER BY nombre_articulo ASC
+                    """, conn)
+                    
                     df_sol = pd.read_sql_query("SELECT s.id_solicitud as Folio, s.fecha_hora as Fecha, s.area as Área, s.solicitante as Solicitante, s.estado as Estado, i.nombre_articulo as Artículo, d.cantidad_entregada as Entregado FROM solicitudes s JOIN detalle_solicitud d ON s.id_solicitud = d.id_solicitud JOIN insumos i ON d.id_insumo = i.id_insumo", conn)
                     df_ent = pd.read_sql_query("SELECT h.fecha_hora as Fecha, i.nombre_articulo as Artículo, h.cantidad_agregada as Cantidad, h.tipo_movimiento as Movimiento FROM historial_entradas h JOIN insumos i ON h.id_insumo = i.id_insumo", conn)
                 finally: conn.close()
+                
                 def conv_df(df):
                     out = io.BytesIO()
                     df.to_excel(out, index=False)
                     return out.getvalue()
+                    
                 c1, c2, c3 = st.columns(3)
-                if not df_inv.empty: c1.download_button("📥 Inventario Total", data=conv_df(df_inv), file_name="Inventario.xlsx")
+                if not df_inv.empty: c1.download_button("📥 Descargar Plantilla Maestra (Inventario)", data=conv_df(df_inv), file_name="Inventario_Maestro.xlsx", type="primary")
                 if not df_sol.empty: c2.download_button("📥 Salidas (Consumo)", data=conv_df(df_sol), file_name="Salidas.xlsx")
                 if not df_ent.empty: c3.download_button("📥 Entradas", data=conv_df(df_ent), file_name="Entradas.xlsx")
                 st.write("---")
