@@ -9,6 +9,7 @@ import os
 import base64
 from PIL import Image
 from fpdf import FPDF
+import math
 
 # ==========================================
 # Cargar el ícono cuadrado
@@ -68,7 +69,6 @@ def init_db():
                         parametro TEXT PRIMARY KEY,
                         valor TEXT)''')
         
-        # NUEVA TABLA: Proveedores
         c.execute('''CREATE TABLE IF NOT EXISTS proveedores (
                         id_proveedor SERIAL PRIMARY KEY,
                         nombre_proveedor TEXT UNIQUE,
@@ -92,6 +92,8 @@ def init_db():
         c.execute("ALTER TABLE insumos ADD COLUMN IF NOT EXISTS stock_maximo INTEGER DEFAULT 0")
         c.execute("ALTER TABLE insumos ADD COLUMN IF NOT EXISTS cantidad_estandar INTEGER DEFAULT 0")
         c.execute("ALTER TABLE insumos ADD COLUMN IF NOT EXISTS proveedor TEXT")
+        # 🚀 NUEVA COLUMNA: Piezas por empaque para compras inteligentes
+        c.execute("ALTER TABLE insumos ADD COLUMN IF NOT EXISTS piezas_por_empaque INTEGER DEFAULT 1")
         conn.commit()
     finally:
         conn.close()
@@ -193,7 +195,7 @@ def obtener_inventario_rapido():
     try: 
         return pd.read_sql_query("""
             SELECT id_insumo, nombre_articulo, familia, departamento, 
-                   existencia, stock_minimo, stock_maximo, cantidad_estandar, componentes, proveedor 
+                   existencia, stock_minimo, stock_maximo, cantidad_estandar, componentes, proveedor, piezas_por_empaque 
             FROM insumos ORDER BY nombre_articulo ASC
         """, conn)
     finally: 
@@ -232,7 +234,7 @@ def mostrar_tarjeta_producto(datos_articulo):
                 
         with col_info:
             st.markdown(f"**{datos_articulo['nombre_articulo']}**")
-            st.caption(f"🚚 Prov: {datos_articulo.get('proveedor', 'GENERAL')}")
+            st.caption(f"🚚 Prov: {datos_articulo.get('proveedor', 'GENERAL')} | 📦 x{int(datos_articulo.get('piezas_por_empaque', 1))}")
             if pd.notna(datos_articulo['componentes']) and str(datos_articulo['componentes']).strip() not in ["", "N/A", "NONE"]:
                 st.caption(f"🧬 {datos_articulo['componentes']}")
             
@@ -495,7 +497,7 @@ elif rol == "Administrador":
             
             conn = get_connection()
             try:
-                insumos_df = pd.read_sql_query("SELECT id_insumo, nombre_articulo, existencia, stock_minimo, stock_maximo, componentes, cantidad_estandar, familia, departamento, imagen_b64, COALESCE(proveedor, 'GENERAL') as proveedor FROM insumos ORDER BY nombre_articulo ASC", conn)
+                insumos_df = pd.read_sql_query("SELECT id_insumo, nombre_articulo, existencia, stock_minimo, stock_maximo, componentes, cantidad_estandar, familia, departamento, imagen_b64, COALESCE(proveedor, 'GENERAL') as proveedor, COALESCE(piezas_por_empaque, 1) as piezas_por_empaque FROM insumos ORDER BY nombre_articulo ASC", conn)
                 proveedores_df = pd.read_sql_query("SELECT nombre_proveedor FROM proveedores ORDER BY nombre_proveedor ASC", conn)
                 lista_provs = proveedores_df['nombre_proveedor'].tolist() if not proveedores_df.empty else ["GENERAL"]
                 
@@ -524,13 +526,13 @@ elif rol == "Administrador":
                             else: st.caption("🚫 Sin imagen")
                         with col_inf_p:
                             st.markdown(f"✅ **{datos_prod['nombre_articulo']}** | 🚚 Prov: {datos_prod['proveedor']}")
-                            st.caption(f"📁 {datos_prod['familia']} - {datos_prod['departamento']} | 🔒 Estandarizado: {int(datos_prod['cantidad_estandar'])}")
+                            st.caption(f"📁 {datos_prod['familia']} - {datos_prod['departamento']} | 🔒 Estandarizado: {int(datos_prod['cantidad_estandar'])} | 📦 {int(datos_prod['piezas_por_empaque'])} pzas x caja")
                             st.markdown(f"📦 **Existencia actual:** `{int(datos_prod['existencia'])} uds` *(Mín: {int(datos_prod['stock_minimo'])} | Máx: {int(datos_prod['stock_maximo'])})*")
                         
                         st.markdown("---")
                         col1, col2 = st.columns(2)
-                        cajas = col1.number_input("Cajas a ingresar", min_value=1, value=1, key=f"cajas_ex_{ent_key}")
-                        pzas = col2.number_input("Piezas x Caja", min_value=1, value=1, key=f"pzas_ex_{ent_key}")
+                        cajas = col1.number_input("Cajas/Empaques a ingresar", min_value=1, value=1, key=f"cajas_ex_{ent_key}")
+                        pzas = col2.number_input("Piezas x Empaque", min_value=1, value=int(datos_prod['piezas_por_empaque']), key=f"pzas_ex_{ent_key}")
                         
                         if st.button("➕ Agregar al Ingreso", type="primary", key=f"btn_add_ex_{ent_key}"):
                             st.session_state.carrito_entradas.append({"id_insumo": id_ins, "nombre": datos_prod['nombre_articulo'], "cajas": cajas, "piezas_caja": pzas, "total": cajas * pzas})
@@ -563,14 +565,14 @@ elif rol == "Administrador":
                         col_m1, col_m2, col_m3 = st.columns(3)
                         s_min = col_m1.number_input("Stock Mínimo (Alerta)", min_value=0, value=2, key=f"min_nv_{ent_key}")
                         s_max = col_m2.number_input("Stock Máximo (Meta)", min_value=1, value=10, key=f"max_nv_{ent_key}")
-                        s_est = col_m3.number_input("Entrega Estandarizada (0 = A petición)", min_value=0, value=0, key=f"est_nv_{ent_key}")
+                        s_est = col_m3.number_input("Entrega Estandarizada (0 = Libre)", min_value=0, value=0, key=f"est_nv_{ent_key}")
                         
                         img_nueva = st.file_uploader("📸 Subir Imagen del Producto", type=["jpg", "png", "jpeg"], key=f"img_nv_{ent_key}")
                         
                         st.markdown("---")
                         col_c1, col_c2 = st.columns(2)
                         c_n = col_c1.number_input("Cajas a ingresar", min_value=1, value=1, key=f"cajas_nv_{ent_key}")
-                        p_n = col_c2.number_input("Piezas x Caja", min_value=1, value=1, key=f"pzas_nv_{ent_key}")
+                        p_n = col_c2.number_input("Piezas x Caja (Se guarda en catálogo)", min_value=1, value=1, key=f"pzas_nv_{ent_key}")
                         
                         if st.button("➕ Crear Catálogo y Agregar", type="primary", key=f"btn_add_nv_{ent_key}"):
                             if not n_nuevo.strip(): st.error("⚠️ El nombre es obligatorio.")
@@ -579,8 +581,8 @@ elif rol == "Administrador":
                                     c = conn.cursor()
                                     comp_clean = comp_nuevo.strip().upper() if comp_nuevo else ""
                                     img_b64_nv = base64.b64encode(img_nueva.getvalue()).decode() if img_nueva else None
-                                    c.execute("""INSERT INTO insumos (nombre_articulo, familia, departamento, componentes, existencia, stock_minimo, stock_maximo, cantidad_estandar, imagen_b64, proveedor) 
-                                        VALUES (%s, %s, %s, %s, 0, %s, %s, %s, %s, %s) RETURNING id_insumo""", (n_nuevo.strip().upper(), f_nueva, d_nuevo, comp_clean, s_min, s_max, s_est, img_b64_nv, prov_nuevo))
+                                    c.execute("""INSERT INTO insumos (nombre_articulo, familia, departamento, componentes, existencia, stock_minimo, stock_maximo, cantidad_estandar, imagen_b64, proveedor, piezas_por_empaque) 
+                                        VALUES (%s, %s, %s, %s, 0, %s, %s, %s, %s, %s, %s) RETURNING id_insumo""", (n_nuevo.strip().upper(), f_nueva, d_nuevo, comp_clean, s_min, s_max, s_est, img_b64_nv, prov_nuevo, p_n))
                                     id_creado = c.fetchone()[0]
                                     conn.commit()
                                     st.session_state.carrito_entradas.append({"id_insumo": id_creado, "nombre": n_nuevo.strip().upper(), "cajas": c_n, "piezas_caja": p_n, "total": c_n * p_n})
@@ -620,7 +622,6 @@ elif rol == "Administrador":
                             c.execute("INSERT INTO historial_entradas (fecha_hora, id_insumo, cantidad_agregada, tipo_movimiento, comentarios) VALUES (%s, %s, %s, %s, %s)", (fh, item['id_insumo'], item['total'], tipo, f"{item['cajas']} cj de {item['piezas_caja']}. Ref: {coment}{info_a}"))
                             c.execute("UPDATE insumos SET existencia = existencia + %s WHERE id_insumo = %s", (item['total'], item['id_insumo']))
                             if tipo == "Compra / Factura":
-                                # 🚀 MAGIA: El sistema actualiza el promedio de entrega del proveedor de este artículo
                                 c.execute("""UPDATE proveedores SET dias_entrega = (dias_entrega + %s) / 2.0 
                                              WHERE nombre_proveedor = (SELECT proveedor FROM insumos WHERE id_insumo = %s)""", (float(dias_tardo), item['id_insumo']))
                         conn.commit()
@@ -649,10 +650,11 @@ elif rol == "Administrador":
                     d_nuevo = c3.selectbox("Depto", ["EXAMENES", "SERVICIOS", "MEDICAMENTO", "ALIMENTOS", "VACUNAS", "ROPA", "ACCESORIOS"], key="nd_art")
                     comp_nuevo = st.text_input("Componentes", key="n_comp")
                     
-                    c4, c5, c6 = st.columns(3)
-                    s_min_nuevo = c4.number_input("Stock Mínimo Manual (Alerta)", min_value=0, value=2, key="n_min_art")
-                    s_max_nuevo = c5.number_input("Stock Máximo Manual (Meta)", min_value=1, value=10, key="n_max_art")
-                    s_est_nuevo = c6.number_input("Entrega Estandarizada (0 = A petición)", min_value=0, value=0, key="n_est_art")
+                    c4, c5, c6, c7 = st.columns(4)
+                    s_min_nuevo = c4.number_input("Stock Mínimo (Alerta)", min_value=0, value=2, key="n_min_art")
+                    s_max_nuevo = c5.number_input("Stock Máximo (Meta)", min_value=1, value=10, key="n_max_art")
+                    s_est_nuevo = c6.number_input("Entrega (0 = Libre)", min_value=0, value=0, key="n_est_art")
+                    pzas_emp_nuevo = c7.number_input("Pzas x Empaque", min_value=1, value=1, help="Ej: Si compras frascos de 60 pastillas, pon 60", key="n_pemp_art")
                     
                     if st.button("Guardar Nuevo Producto", type="primary", key="btn_guardar_nuevo"):
                         if n_nuevo:
@@ -660,9 +662,9 @@ elif rol == "Administrador":
                             try:
                                 c = conn.cursor()
                                 comp_nuevo_clean = comp_nuevo.strip().upper() if comp_nuevo else ""
-                                c.execute("""INSERT INTO insumos (nombre_articulo, familia, departamento, componentes, existencia, stock_minimo, stock_maximo, cantidad_estandar, proveedor) 
-                                             VALUES (%s, %s, %s, %s, 0, %s, %s, %s, %s)""", 
-                                          (n_nuevo.strip().upper(), f_nuevo, d_nuevo, comp_nuevo_clean, s_min_nuevo, s_max_nuevo, s_est_nuevo, p_nuevo))
+                                c.execute("""INSERT INTO insumos (nombre_articulo, familia, departamento, componentes, existencia, stock_minimo, stock_maximo, cantidad_estandar, proveedor, piezas_por_empaque) 
+                                             VALUES (%s, %s, %s, %s, 0, %s, %s, %s, %s, %s)""", 
+                                          (n_nuevo.strip().upper(), f_nuevo, d_nuevo, comp_nuevo_clean, s_min_nuevo, s_max_nuevo, s_est_nuevo, p_nuevo, pzas_emp_nuevo))
                                 conn.commit()
                                 st.success("Agregado exitosamente.")
                                 time.sleep(1); st.rerun()
@@ -677,9 +679,9 @@ elif rol == "Administrador":
                 
                 if not df_cat.empty:
                     df_display = df_cat[['nombre_articulo', 'proveedor', 'stock_minimo', 'stock_maximo']].copy()
-                    df_display['Entrega'] = df_cat['cantidad_estandar'].fillna(0).apply(lambda x: f"🔒 {int(x)} uds" if int(x) > 0 else "✍️ A petición")
+                    df_display['Empaque'] = df_cat['piezas_por_empaque'].fillna(1).apply(lambda x: f"x{int(x)}")
                     df_display['Imagen'] = df_cat['imagen_b64'].apply(lambda x: "✅" if pd.notna(x) and str(x).strip() != "" else "🚫")
-                    df_display.columns = ['Producto', 'Proveedor', 'Mínimo', 'Máximo', 'Entrega Hospital', 'Imagen']
+                    df_display.columns = ['Producto', 'Proveedor', 'Mínimo', 'Máximo', 'Pzas Empaque', 'Imagen']
                     st.dataframe(df_display, use_container_width=True, hide_index=True)
                     
                     st.write("---")
@@ -698,11 +700,9 @@ elif rol == "Administrador":
                         
                         col_e1, col_e2, col_e3, col_e_p = st.columns(4)
                         n_edit = col_e1.text_input("Nombre", value=datos_art['nombre_articulo'], key="ed_nom_art")
-                        
                         prov_actual = datos_art.get('proveedor', 'GENERAL')
                         prov_index = lista_provs.index(prov_actual) if prov_actual in lista_provs else 0
                         p_edit = col_e_p.selectbox("Proveedor", lista_provs, index=prov_index, key="ed_prov_art")
-                        
                         fam_index = ["PRODUCTOS", "SERVICIOS"].index(datos_art['familia']) if datos_art['familia'] in ["PRODUCTOS", "SERVICIOS"] else 0
                         f_edit = col_e2.selectbox("Familia", ["PRODUCTOS", "SERVICIOS"], index=fam_index, key="ed_fam_art")
                         dept_opts = ["EXAMENES", "SERVICIOS", "MEDICAMENTO", "ALIMENTOS", "VACUNAS", "ROPA", "ACCESORIOS"]
@@ -717,11 +717,13 @@ elif rol == "Administrador":
                             if "ERROR" not in res: st.session_state["edit_comp_val"] = res.upper(); st.rerun()
                             else: st.error(res)
                         
-                        col_e4, col_e5, col_e6 = st.columns(3)
+                        col_e4, col_e5, col_e6, col_e7 = st.columns(4)
                         min_edit = col_e4.number_input("Stock Mín", min_value=0, value=int(datos_art['stock_minimo']), key="ed_min_art")
                         max_edit = col_e5.number_input("Stock Máx", min_value=1, value=max(1, int(datos_art['stock_maximo'])), key="ed_max_art")
                         est_actual = int(datos_art['cantidad_estandar']) if pd.notna(datos_art.get('cantidad_estandar')) else 0
-                        est_edit = col_e6.number_input("Entrega Estandarizada (0 = A petición)", min_value=0, value=est_actual, key="ed_est_art")
+                        est_edit = col_e6.number_input("Entrega (0=Libre)", min_value=0, value=est_actual, key="ed_est_art")
+                        emp_actual = int(datos_art.get('piezas_por_empaque', 1)) if pd.notna(datos_art.get('piezas_por_empaque')) else 1
+                        emp_edit = col_e7.number_input("Pzas x Empaque", min_value=1, value=emp_actual, key="ed_emp_art")
                         
                         uploader_key = st.session_state.get("file_uploader_key", 0)
                         img_upload = st.file_uploader("Subir / Actualizar Imagen", type=["jpg", "png", "jpeg"], key=f"img_up_{uploader_key}")
@@ -737,12 +739,12 @@ elif rol == "Administrador":
                                     if img_upload:
                                         img_b64 = base64.b64encode(img_upload.getvalue()).decode()
                                         c.execute("""UPDATE insumos SET nombre_articulo=%s, familia=%s, departamento=%s, componentes=%s, 
-                                                     stock_minimo=%s, stock_maximo=%s, cantidad_estandar=%s, proveedor=%s, imagen_b64=%s WHERE id_insumo=%s""", 
-                                                  (n_edit.strip().upper(), f_edit, d_edit, c_edit_clean, min_edit, max_edit, est_edit, p_edit, img_b64, int(datos_art['id_insumo'])))
+                                                     stock_minimo=%s, stock_maximo=%s, cantidad_estandar=%s, proveedor=%s, piezas_por_empaque=%s, imagen_b64=%s WHERE id_insumo=%s""", 
+                                                  (n_edit.strip().upper(), f_edit, d_edit, c_edit_clean, min_edit, max_edit, est_edit, p_edit, emp_edit, img_b64, int(datos_art['id_insumo'])))
                                     else:
                                         c.execute("""UPDATE insumos SET nombre_articulo=%s, familia=%s, departamento=%s, componentes=%s, 
-                                                     stock_minimo=%s, stock_maximo=%s, cantidad_estandar=%s, proveedor=%s WHERE id_insumo=%s""", 
-                                                  (n_edit.strip().upper(), f_edit, d_edit, c_edit_clean, min_edit, max_edit, est_edit, p_edit, int(datos_art['id_insumo'])))
+                                                     stock_minimo=%s, stock_maximo=%s, cantidad_estandar=%s, proveedor=%s, piezas_por_empaque=%s WHERE id_insumo=%s""", 
+                                                  (n_edit.strip().upper(), f_edit, d_edit, c_edit_clean, min_edit, max_edit, est_edit, p_edit, emp_edit, int(datos_art['id_insumo'])))
                                     conn.commit()
                                     st.success("Artículo actualizado.")
                                     st.session_state["last_edit_art"] = None
@@ -753,19 +755,15 @@ elif rol == "Administrador":
                         if col_btn_e2.button("🗑️ Eliminar Artículo", key="btn_elim_ed"):
                             conn = get_connection()
                             try:
-                                c = conn.cursor()
-                                c.execute("DELETE FROM insumos WHERE id_insumo = %s", (int(datos_art['id_insumo']),))
-                                conn.commit()
-                                st.success("Artículo eliminado.")
-                                st.session_state["last_edit_art"] = None
-                                time.sleep(1); st.rerun()
+                                c = conn.cursor(); c.execute("DELETE FROM insumos WHERE id_insumo = %s", (int(datos_art['id_insumo']),)); conn.commit()
+                                st.success("Artículo eliminado."); st.session_state["last_edit_art"] = None; time.sleep(1); st.rerun()
                             except IntegrityError: st.error("⚠ No se puede eliminar: tiene historial.")
                             finally: conn.close()
                 else: st.info("No hay artículos en el catálogo.")
                     
             with tab_masiva:
                 st.write("**Carga Masiva desde Excel**")
-                st.info("El archivo Excel debe tener la columna: PRODUCTO. Opcionales: PROVEEDOR, MINIMO, MAXIMO, ESTANDAR, FAMILIA, DEPARTAMENTO.")
+                st.info("El archivo Excel debe tener la columna: PRODUCTO. Opcionales: PROVEEDOR, MINIMO, MAXIMO, PZAS_EMPAQUE, ESTANDAR, FAMILIA, DEPARTAMENTO.")
                 archivo_masivo = st.file_uploader("Sube tu catálogo completo", type=["xls", "xlsx"])
                 if archivo_masivo:
                     df_masivo = pd.read_excel(archivo_masivo)
@@ -789,13 +787,15 @@ elif rol == "Administrador":
                                     except: s_max = 0
                                     try: s_est = int(float(row.get('ESTANDAR', 0))) if 'ESTANDAR' in df_masivo.columns else 0
                                     except: s_est = 0
+                                    try: pzas_e = int(float(row.get('PZAS_EMPAQUE', 1))) if 'PZAS_EMPAQUE' in df_masivo.columns else 1
+                                    except: pzas_e = 1
                                     
                                     try:
                                         c.execute("INSERT INTO proveedores (nombre_proveedor) VALUES (%s) ON CONFLICT DO NOTHING", (pr,))
-                                        c.execute("""INSERT INTO insumos (nombre_articulo, familia, departamento, existencia, stock_minimo, stock_maximo, cantidad_estandar, proveedor) 
-                                            VALUES (%s, %s, %s, 0, %s, %s, %s, %s) ON CONFLICT (nombre_articulo) 
-                                            DO UPDATE SET stock_minimo = EXCLUDED.stock_minimo, stock_maximo = EXCLUDED.stock_maximo, cantidad_estandar = EXCLUDED.cantidad_estandar, proveedor = EXCLUDED.proveedor
-                                        """, (p, f, d, s_min, s_max, s_est, pr))
+                                        c.execute("""INSERT INTO insumos (nombre_articulo, familia, departamento, existencia, stock_minimo, stock_maximo, cantidad_estandar, proveedor, piezas_por_empaque) 
+                                            VALUES (%s, %s, %s, 0, %s, %s, %s, %s, %s) ON CONFLICT (nombre_articulo) 
+                                            DO UPDATE SET stock_minimo = EXCLUDED.stock_minimo, stock_maximo = EXCLUDED.stock_maximo, cantidad_estandar = EXCLUDED.cantidad_estandar, proveedor = EXCLUDED.proveedor, piezas_por_empaque = EXCLUDED.piezas_por_empaque
+                                        """, (p, f, d, s_min, s_max, s_est, pr, pzas_e))
                                         count_ok += 1
                                     except Exception: count_errores += 1
                                 conn.commit()
@@ -808,11 +808,10 @@ elif rol == "Administrador":
             tab_ia, tab_rep, tab_ven = st.tabs(["🤖 Compras Inteligentes (PDF)", "📊 Reportes Clásicos", "📉 Descuento Excel Ventas"])
             
             with tab_ia:
-                st.info("💡 **MRP Inteligente:** El sistema calcula el promedio de consumo de los últimos 30 días, cruza los datos con el tiempo de entrega de cada proveedor, y calcula matemáticamente qué debes comprar hoy para no quedarte en ceros.")
+                st.info("💡 **MRP Inteligente:** El sistema calcula el promedio de consumo de los últimos 30 días, cruza los datos con el tiempo de entrega de cada proveedor, y calcula matemáticamente cuántos **empaques/cajas** debes comprar hoy.")
                 
                 conn = get_connection()
                 try:
-                    # Traemos lo entregado los últimos 30 días (Consumo Real) y convertimos el texto a timestamp
                     df_consumo = pd.read_sql_query("""
                         SELECT d.id_insumo, SUM(d.cantidad_entregada) as total_30d 
                         FROM detalle_solicitud d 
@@ -820,39 +819,38 @@ elif rol == "Administrador":
                         WHERE s.estado = 'SURTIDA' AND s.fecha_hora::timestamp >= NOW() - INTERVAL '30 days'
                         GROUP BY d.id_insumo
                     """, conn)
-                    # Traemos catálogo y tiempos del proveedor
                     df_inv = pd.read_sql_query("""
                         SELECT i.id_insumo, i.nombre_articulo, i.existencia, i.stock_minimo, i.stock_maximo, 
                                COALESCE(i.proveedor, 'GENERAL') as proveedor, 
-                               COALESCE(p.dias_entrega, 3.0) as dias_entrega
+                               COALESCE(p.dias_entrega, 3.0) as dias_entrega,
+                               COALESCE(i.piezas_por_empaque, 1) as piezas_empaque
                         FROM insumos i LEFT JOIN proveedores p ON i.proveedor = p.nombre_proveedor
                     """, conn)
                 finally: conn.close()
                 
-                # Matemáticas IA para MRP
                 df_m = pd.merge(df_inv, df_consumo, on='id_insumo', how='left').fillna({'total_30d': 0})
                 df_m['consumo_diario'] = df_m['total_30d'] / 30.0
-                
-                # Fórmula de Reorden: (Consumo * Días que tarda en llegar) + (Colchón de seguridad 2 días)
                 df_m['min_ia'] = (df_m['consumo_diario'] * df_m['dias_entrega']) + (df_m['consumo_diario'] * 2)
                 df_m['min_real'] = df_m.apply(lambda x: x['min_ia'] if x['total_30d'] > 0 else x['stock_minimo'], axis=1)
                 
-                # Filtramos los que bajaron de su alerta inteligente
                 df_pedir = df_m[df_m['existencia'] <= df_m['min_real']].copy()
                 
                 if df_pedir.empty:
                     st.success("🎉 ¡Tu bodega está perfecta! Según la Inteligencia Artificial y tus ventas, tienes abasto suficiente de todo.")
                 else:
-                    # Fórmula de Meta: Lo mínimo + pedido para 15 días de operación
                     df_pedir['max_ia'] = df_pedir['min_real'] + (df_pedir['consumo_diario'] * 15)
                     df_pedir['max_real'] = df_pedir.apply(lambda x: x['max_ia'] if x['total_30d'] > 0 else x['stock_maximo'], axis=1)
                     
-                    df_pedir['Cantidad_A_Pedir'] = (df_pedir['max_real'] - df_pedir['existencia']).apply(lambda x: max(1, int(x)))
-                    df_pedir['Stock_Actual'] = df_pedir['existencia']
+                    # 🚀 MAGIA LOGÍSTICA: Dividimos los faltantes entre las piezas por empaque y redondeamos hacia arriba.
+                    df_pedir['Unidades_Faltantes'] = df_pedir['max_real'] - df_pedir['existencia']
+                    df_pedir['Empaques_A_Pedir'] = df_pedir.apply(lambda x: max(1, math.ceil(x['Unidades_Faltantes'] / x['piezas_empaque'])), axis=1)
+                    
                     df_pedir['Artículo'] = df_pedir['nombre_articulo']
                     df_pedir['Proveedor'] = df_pedir['proveedor']
                     
-                    df_final_pdf = df_pedir[['Proveedor', 'Artículo', 'Stock_Actual', 'Cantidad_A_Pedir']].sort_values(by=['Proveedor', 'Artículo'])
+                    # 🚀 Ocultamos la existencia en la tabla y en el PDF
+                    df_final_pdf = df_pedir[['Proveedor', 'Artículo', 'Empaques_A_Pedir']].sort_values(by=['Proveedor', 'Artículo'])
+                    df_final_pdf.rename(columns={'Empaques_A_Pedir': 'Cant. (Cajas/Frascos)'}, inplace=True)
                     st.dataframe(df_final_pdf, hide_index=True)
                     
                     def crear_pdf_compras(df_pedidos):
@@ -861,7 +859,6 @@ elif rol == "Administrador":
                         for prov in df_pedidos['Proveedor'].unique():
                             pdf.add_page()
                             pdf.set_font("Arial", "B", 14)
-                            # Limpiar acentos para fpdf clasico
                             p_text = str(prov).encode('latin-1', 'replace').decode('latin-1')
                             pdf.cell(0, 10, f"ORDEN DE COMPRA | PROVEEDOR: {p_text}", ln=True, align="L")
                             pdf.set_font("Arial", "", 10)
@@ -869,18 +866,16 @@ elif rol == "Administrador":
                             pdf.ln(5)
                             
                             pdf.set_font("Arial", "B", 10)
-                            pdf.cell(110, 10, "Producto", border=1)
-                            pdf.cell(35, 10, "Existencia", border=1, align="C")
-                            pdf.cell(35, 10, "A Pedir", border=1, align="C")
+                            pdf.cell(140, 10, "Producto", border=1)
+                            pdf.cell(40, 10, "Cant. (Empaques)", border=1, align="C")
                             pdf.ln()
                             
                             pdf.set_font("Arial", "", 9)
                             df_prov = df_pedidos[df_pedidos['Proveedor'] == prov]
                             for _, row in df_prov.iterrows():
-                                nombre = str(row['Artículo']).encode('latin-1', 'replace').decode('latin-1')[:55]
-                                pdf.cell(110, 10, nombre, border=1)
-                                pdf.cell(35, 10, str(int(row['Stock_Actual'])), border=1, align="C")
-                                pdf.cell(35, 10, str(int(row['Cantidad_A_Pedir'])), border=1, align="C")
+                                nombre = str(row['Artículo']).encode('latin-1', 'replace').decode('latin-1')[:65]
+                                pdf.cell(140, 10, nombre, border=1)
+                                pdf.cell(40, 10, str(int(row['Cant. (Cajas/Frascos)'])), border=1, align="C")
                                 pdf.ln()
                         return bytes(pdf.output(dest='S'), 'latin-1')
 
@@ -944,9 +939,7 @@ elif rol == "Administrador":
                     if st.form_submit_button("Guardar") and n_pers:
                         conn = get_connection()
                         try:
-                            c = conn.cursor()
-                            c.execute("INSERT INTO personal (nombre) VALUES (%s)", (n_pers.strip().upper(),))
-                            conn.commit(); st.success("Registrado."); time.sleep(1); st.rerun()
+                            c = conn.cursor(); c.execute("INSERT INTO personal (nombre) VALUES (%s)", (n_pers.strip().upper(),)); conn.commit(); st.success("Registrado."); time.sleep(1); st.rerun()
                         except IntegrityError: st.error("Ya existe.")
                         finally: conn.close()
                 st.divider()
@@ -964,8 +957,7 @@ elif rol == "Administrador":
                         col_btn1, col_btn2 = st.columns(2)
                         if col_btn1.button("Actualizar", type="primary", key="btn_act_pers"):
                             conn = get_connection()
-                            try:
-                                c = conn.cursor(); c.execute("UPDATE personal SET nombre = %s WHERE id_personal = %s", (n_nom.strip().upper(), id_p)); conn.commit(); st.rerun()
+                            try: c = conn.cursor(); c.execute("UPDATE personal SET nombre = %s WHERE id_personal = %s", (n_nom.strip().upper(), id_p)); conn.commit(); st.rerun()
                             except IntegrityError: st.error("Ese nombre ya existe.")
                             finally: conn.close()
                         if col_btn2.button("🗑️ Eliminar", key="btn_del_pers"):
@@ -978,8 +970,7 @@ elif rol == "Administrador":
                     n_area = st.text_input("Nueva Área")
                     if st.form_submit_button("Guardar") and n_area:
                         conn = get_connection()
-                        try:
-                            c = conn.cursor(); c.execute("INSERT INTO areas (nombre_area) VALUES (%s)", (n_area.strip().upper(),)); conn.commit(); st.rerun()
+                        try: c = conn.cursor(); c.execute("INSERT INTO areas (nombre_area) VALUES (%s)", (n_area.strip().upper(),)); conn.commit(); st.rerun()
                         except IntegrityError: st.error("Ya existe.")
                         finally: conn.close()
                 st.divider()
@@ -1008,8 +999,7 @@ elif rol == "Administrador":
                     n_prov = st.text_input("Nuevo Proveedor")
                     if st.form_submit_button("Guardar") and n_prov:
                         conn = get_connection()
-                        try:
-                            c = conn.cursor(); c.execute("INSERT INTO proveedores (nombre_proveedor) VALUES (%s)", (n_prov.strip().upper(),)); conn.commit(); st.rerun()
+                        try: c = conn.cursor(); c.execute("INSERT INTO proveedores (nombre_proveedor) VALUES (%s)", (n_prov.strip().upper(),)); conn.commit(); st.rerun()
                         except IntegrityError: st.error("Ya existe.")
                         finally: conn.close()
                 st.divider()
